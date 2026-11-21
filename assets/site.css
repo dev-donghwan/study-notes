@@ -33,7 +33,7 @@ body {
 }
 a { color: var(--acc); text-decoration: none; }
 a:hover { text-decoration: underline; }
-code { font: .86em/1.4 "JetBrains Mono", ui-monospace, Menlo, monospace; background: var(--code); padding: .1em .4em; border-radius: 4px; }
+code { font: .86em/1.4 "JetBrains Mono", ui-monospace, Menlo, monospace; background: var(--code); padding: .1em .4em; border-radius: 4px; overflow-wrap: anywhere; }
 b, strong { font-weight: 700; }
 
 /* ---------- 상단 바 ---------- */
