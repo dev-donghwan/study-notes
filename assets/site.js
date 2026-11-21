@@ -17,16 +17,21 @@
   });
   label();
 
-  // 복사 억제: 코드 블록 · 인라인 코드 밖에서는 우클릭 · 복사 · 끌기를 막는다
+  // 복사 억제: 배포 사이트에서만, 코드 블록 · 인라인 코드 밖의 우클릭 · 복사 · 끌기를 막는다
+  // 로컬(file://, localhost)에서는 그대로 복사된다
+  var local = location.protocol === "file:" || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  if (!local) root.classList.add("no-copy");
   function inCode(n) { return n && n.closest && n.closest("pre.code, code"); }
   function el(n) { return n && n.nodeType === 3 ? n.parentElement : n; }
-  ["contextmenu", "dragstart"].forEach(function (ev) {
-    document.addEventListener(ev, function (e) { if (!inCode(el(e.target))) e.preventDefault(); });
-  });
-  document.addEventListener("copy", function (e) {
-    var s = window.getSelection && window.getSelection();
-    if (!s || !s.rangeCount || !inCode(el(s.getRangeAt(0).commonAncestorContainer))) e.preventDefault();
-  });
+  if (!local) {
+    ["contextmenu", "dragstart"].forEach(function (ev) {
+      document.addEventListener(ev, function (e) { if (!inCode(el(e.target))) e.preventDefault(); });
+    });
+    document.addEventListener("copy", function (e) {
+      var s = window.getSelection && window.getSelection();
+      if (!s || !s.rangeCount || !inCode(el(s.getRangeAt(0).commonAncestorContainer))) e.preventDefault();
+    });
+  }
 
   // 새 탭은 문서 본문(장) 안에서 다른 페이지를 여는 링크만.
   // 상단 바 · 목록 행 · 이전/다음 같은 이동 링크는 같은 탭에서 이동한다.

@@ -158,6 +158,6 @@ pre.code[data-lang]::before { content: attr(data-lang); position: absolute; top:
 .site-foot { max-width: 1100px; margin: 40px auto 0; padding: 18px 16px 28px; border-top: 1px solid var(--line); color: var(--sub); font-size: 12px; line-height: 1.6; text-align: center; }
 .site-foot a { color: var(--sub); text-decoration: underline; }
 
-/* 복사 억제: 본문은 선택 불가, 코드 블록 · 인라인 코드만 선택 허용 */
-body { -webkit-user-select: none; user-select: none; }
-pre.code, code { -webkit-user-select: text; user-select: text; }
+/* 복사 억제 (배포 사이트만, site.js 가 html.no-copy 를 붙임): 본문은 선택 불가, 코드 블록 · 인라인 코드만 선택 허용 */
+html.no-copy body { -webkit-user-select: none; user-select: none; }
+html.no-copy pre.code, html.no-copy code { -webkit-user-select: text; user-select: text; }
