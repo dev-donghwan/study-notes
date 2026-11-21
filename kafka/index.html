@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka · 공부 노트</title>
+<meta name="description" content="Kafka 운영에서 유실과 중복을 막는 방법과 exactly-once">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">공부 노트</a>
+  <a class="crumb" href="index.html">/ Kafka</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" type="button">다크 모드</button>
+</header>
+<section class="hero">
+  <h1>Kafka</h1>
+  <p>복제가 어떻게 동작하는지 보고, 메시지가 어디서 사라지고 어디서 두 번 남는지, 무엇으로 막는지 정리한다.</p>
+</section>
+<main class="topics">
+  <div class="cards">
+    <a class="card" href="replication.html">
+      <span class="no">1</span>
+      <h3>복제와 ISR</h3>
+      <p class="kws"><span class="kw">fetch</span><span class="kw">LEO</span><span class="kw">HW</span><span class="kw">ISR</span><span class="kw">리더 선출</span><span class="kw">ELR</span><span class="kw">leader epoch</span></p>
+    </a>
+    <a class="card" href="delivery-guarantee.html">
+      <span class="no">2</span>
+      <h3>유실 · 중복 · exactly-once</h3>
+      <p class="kws"><span class="kw">acks</span><span class="kw">멱등 프로듀서</span><span class="kw">오프셋 커밋</span><span class="kw">inbox</span><span class="kw">outbox</span><span class="kw">트랜잭션</span><span class="kw">펜싱</span></p>
+    </a>
+  </div>
+</main>
+<footer class="site-foot">© 2026 dev-donghwan · <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/deed.ko" rel="license noopener" target="_blank">CC BY-NC-ND 4.0</a> · 출처를 밝히면 공유할 수 있고, 상업적 이용과 변경은 허락하지 않습니다.</footer>
+<script src="../assets/site.js"></script>
+</body>
+</html>

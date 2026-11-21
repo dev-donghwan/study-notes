@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>샘플: 새 문서가 사이트에 오르기까지 · 공부 노트</title>
+<meta name="description" content="템플릿 형식을 채운 예시 문서">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">공부 노트</a>
+  <a class="crumb" href="index.html">/ 샘플</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" type="button">다크 모드</button>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="목차">
+    <div class="toc-title">목차</div>
+    <ol>
+      <li><a href="#c1">1. 흐름</a></li>
+      <li><a href="#c2">2. 원본에 쓰는 것과 틀이 하는 것</a></li>
+      <li><a href="#c3">3. 코드와 설정</a></li>
+      <li><a href="#c4">4. 한 장 요약</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="doc-head">
+      <h1>샘플: 새 문서가 사이트에 오르기까지</h1>
+      <p>원본 하나가 공통 틀에 감싸여 사이트 HTML 이 되기까지를 따라간다.</p>
+    </div>
+    <section class="chapter" id="c1">
+      <h2><span class="no">1</span>원본에서 사이트까지의 흐름</h2>
+      <div class="fig"><svg viewBox="-2 1 854 153" style="max-width:854px;margin:0 auto" role="img" aria-label="문서가 사이트에 오르는 흐름"><defs><marker id="f4677564-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f4677564-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f4677564-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f4677564-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f4677564-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="40" width="150" height="34" rx="7" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="95.0" y="61.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">src 원본</text><rect x="240" y="40" width="150" height="34" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="315.0" y="61.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">build.py</text><rect x="460" y="40" width="150" height="34" rx="7" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="535.0" y="61.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">규칙 검사</text><rect x="680" y="40" width="150" height="34" rx="7" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="755.0" y="61.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">사이트 HTML</text><path d="M172,57 L236,57" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f4677564-acc)"/><path d="M392,57 L456,57" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f4677564-sub)"/><path d="M612,57 L676,57" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f4677564-ok)"/><circle cx="315" cy="34" r="11" style="fill:var(--acc)"/><text x="315" y="38.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><circle cx="535" cy="34" r="11" style="fill:var(--warn)"/><text x="535" y="38.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><circle cx="755" cy="34" r="11" style="fill:var(--ok)"/><text x="755" y="38.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text><path d="M535,76 L535,110 L95,110 L95,78" fill="none" style="stroke:var(--bad)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round" marker-end="url(#f4677564-bad)"/><text x="315" y="128" font-size="12" style="fill:var(--bad)" font-weight="700" text-anchor="middle" opacity="1">위반하면 빌드 중단</text></svg></div>
+      <ol>
+        <li><b>공통 틀로 감싸기</b>
+          <ul>
+            <li><code>build.py</code>가 원본 본문을 <code>templates/partials/layout.html</code>에 넣음</li>
+            <li>장 번호 · 목차 · 이전/다음 링크를 자동으로 붙임</li>
+          </ul></li>
+        <li><b>규칙 검사</b>
+          <ul>
+            <li>STYLE.md 의 [자동] 규칙을 결과 HTML 에서 검사</li>
+            <li>위반하면 파일:줄과 이유를 보여 주고 멈춤</li>
+          </ul></li>
+        <li><b>사이트 HTML</b>
+          <ul>
+            <li><code>&lt;주제&gt;/&lt;문서&gt;.html</code>로 저장</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <section class="chapter" id="c2">
+      <h2><span class="no">2</span>원본에 쓰는 것과 틀이 하는 것</h2>
+      <div class="table-wrap"><table>
+        <tr><th></th><th>원본 (src)</th><th>공통 틀 · 빌드</th></tr>
+        <tr><td>머리말</td><td><ul><li>title · description · lead</li></ul></td><td><ul><li>head · 문서 제목 · 첫 문장에 채움</li></ul></td></tr>
+        <tr><td>장</td><td><ul><li><code>&lt;section class="chapter"&gt;</code> + h2</li></ul></td><td><ul><li>id · 번호 · 목차</li></ul></td></tr>
+        <tr><td>순서</td><td><ul><li>series.json 의 pages</li></ul></td><td><ul><li>목록 번호 · 이전/다음 링크</li></ul></td></tr>
+      </table></div>
+      <h3>알아 둘 성질</h3>
+      <div class="table-wrap"><table>
+        <tr><th>성질</th><th>내용</th></tr>
+        <tr><td>그림 이름</td><td><ul><li>사이트 전체에서 하나의 이름 공간</li><li>"&lt;주제&gt;-" 접두어를 붙임</li></ul></td></tr>
+        <tr><td>목차 문구</td><td><ul><li>기본은 h2 그대로</li><li>짧게 하려면 <code>data-toc</code></li></ul></td></tr>
+      </table></div>
+      <div class="note"><ul><li>결과 HTML 은 직접 고치지 않는다. 다음 빌드에서 덮어써진다</li></ul></div>
+    </section>
+
+    <section class="chapter" id="c3">
+      <h2><span class="no">3</span>코드와 설정</h2>
+      <pre class="code" data-lang="Shell"><code>cp templates/page.html src/kafka/new-doc.html
+python3 tools/build.py</code></pre>
+      <div class="table-wrap"><table>
+        <tr><th>파일</th><th>기본값</th><th>설명</th></tr>
+        <tr><td><code>series.json</code> <code>hidden</code></td><td>false</td><td><ul><li>true 면 홈 목록에 안 나옴</li><li>샘플 · 작성 중 주제에 씀</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c4">
+      <h2><span class="no">4</span>한 장 요약</h2>
+      <ul>
+        <li><b>원본</b>
+          <ul>
+            <li>머리말 + 장만 쓴다</li>
+          </ul></li>
+        <li><b>빌드</b>
+          <ul>
+            <li>틀로 감싸고 번호 · 목차 · 링크를 붙인 뒤 규칙을 검사한다</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <nav class="pager">
+      <a href="index.html"><small>목록</small>샘플 목록</a>
+      <a href="index.html" style="text-align:right"><small>목록</small>샘플 목록</a>
+    </nav>
+  </main>
+</div>
+<footer class="site-foot">© 2026 dev-donghwan · <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/deed.ko" rel="license noopener" target="_blank">CC BY-NC-ND 4.0</a> · 출처를 밝히면 공유할 수 있고, 상업적 이용과 변경은 허락하지 않습니다.</footer>
+<script src="../assets/site.js"></script>
+</body>
+</html>

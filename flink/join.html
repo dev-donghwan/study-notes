@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flink 조인과 상태 · 공부 노트</title>
+<meta name="description" content="스트림 조인이 상태를 쌓는 이유와 조인 종류별 상태 관리">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">공부 노트</a>
+  <a class="crumb" href="index.html">/ Flink</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" type="button">다크 모드</button>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="목차">
+    <div class="toc-title">목차</div>
+    <ol>
+      <li><a href="#c1">1. 조인이 상태를 쌓는 이유</a></li>
+      <li><a href="#c2">2. 조인 종류와 병목</a></li>
+      <li><a href="#c3">3. 고르는 기준</a></li>
+      <li><a href="#c4">4. 상태 백엔드와의 관계</a></li>
+      <li><a href="#c5">5. 설정 한눈에</a></li>
+      <li><a href="#c6">6. 한 장 요약</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="doc-head">
+      <h1>Flink 조인과 상태</h1>
+      <p>스트림끼리 조인하면 왜 상태가 커지고, 조인 종류마다 무엇을 얼마나 들고 있는지 본다. 옵션은 Flink 2.2 기준.</p>
+    </div>
+
+    <section class="chapter" id="c1">
+      <h2><span class="no">1</span>조인이 상태를 쌓는 이유</h2>
+      <div class="fig"><svg viewBox="-2 -2 986 289" style="max-width:986px;margin:0 auto" role="img" aria-label="조인 서브태스크의 상태"><defs><marker id="f3335011-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f3335011-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f3335011-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f3335011-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f3335011-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><text x="20" y="44" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">클릭 스트림</text><rect x="20" y="56" width="54" height="30" rx="7" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="47.0" y="75.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k1</text><rect x="82" y="56" width="54" height="30" rx="7" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="109.0" y="75.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k2</text><rect x="144" y="56" width="54" height="30" rx="7" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="171.0" y="75.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k1</text><text x="20" y="174" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">주문 스트림</text><rect x="20" y="186" width="54" height="30" rx="7" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="47.0" y="205.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k3</text><rect x="82" y="186" width="54" height="30" rx="7" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="109.0" y="205.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k1</text><path d="M206,71 L300,100" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f3335011-acc)"/><path d="M144,201 L300,176" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f3335011-warn)"/><rect x="306" y="20" width="470" height="240" rx="14" style="fill:var(--tm);stroke:var(--sub)" stroke-width="1.4" opacity="1"/><text x="322" y="44" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">조인 서브태스크 (키별 상태)</text><rect x="322" y="60" width="214" height="184" rx="10" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.5" opacity="1"/><text x="338" y="84" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">클릭 대기</text><rect x="546" y="60" width="214" height="184" rx="10" style="fill:var(--panel);stroke:var(--warn)" stroke-width="1.5" opacity="1"/><text x="562" y="84" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">주문 대기</text><rect x="338" y="100" width="182" height="30" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.3" opacity="1"/><text x="352" y="120" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">k1</text><text x="508" y="120" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="end" opacity="1">클릭 2건</text><rect x="338" y="140" width="182" height="30" rx="6" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.3" opacity="1"/><text x="352" y="160" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">k2</text><text x="508" y="160" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="end" opacity="1">클릭 1건</text><rect x="562" y="100" width="182" height="30" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.3" opacity="1"/><text x="576" y="120" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">k1</text><text x="732" y="120" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="end" opacity="1">주문 1건</text><rect x="562" y="140" width="182" height="30" rx="6" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.3" opacity="1"/><text x="576" y="160" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">k3</text><text x="732" y="160" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="end" opacity="1">주문 1건</text><text x="429" y="222" font-size="16" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">…</text><text x="653" y="222" font-size="16" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">…</text><path d="M778,140 L836,140" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f3335011-ok)"/><rect x="842" y="112" width="120" height="56" rx="7" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="902.0" y="144.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k1 클릭 × 주문</text><circle cx="300" cy="100" r="11" style="fill:var(--acc)"/><text x="300" y="104.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><circle cx="540" cy="115" r="11" style="fill:var(--ok)"/><text x="540" y="119.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><circle cx="429" cy="254" r="11" style="fill:var(--bad)"/><text x="429" y="258.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text><circle cx="653" cy="254" r="11" style="fill:var(--bad)"/><text x="653" y="258.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text></svg></div>
+      <ol>
+        <li><b>들어오면 저장</b>
+          <ul>
+            <li>keyBy로 같은 키는 같은 서브태스크에 모임</li>
+            <li>레코드는 자기 쪽 대기 상태에 키별로 저장</li>
+          </ul></li>
+        <li><b>짝을 찾으면 결과</b>
+          <ul>
+            <li>반대쪽 대기 상태에서 같은 키를 찾아 결과를 냄</li>
+            <li>찾아도 지우지 않음 — 같은 키의 다음 레코드도 짝이 될 수 있음</li>
+          </ul></li>
+        <li><b>계속 쌓임</b>
+          <ul>
+            <li>짝이 언제 올지 모르니 시간 제한이 없으면 양쪽을 영원히 보관</li>
+            <li>상태가 끝없이 커짐 → 메모리 · 체크포인트 크기 · 복구 시간이 함께 늘어남</li>
+          </ul></li>
+      </ol>
+      <div class="note"><ul><li>셔플(keyBy)은 같은 키를 모으려고 일어날 뿐, 상태가 커지는 원인은 "보관 기간이 없음"</li></ul></div>
+    </section>
+
+    <section class="chapter" id="c2">
+      <h2><span class="no">2</span>조인 종류와 병목</h2>
+      <p class="lead">종류를 가르는 기준은 "상태를 얼마나 들고 있나"다.</p>
+      <div class="fig"><svg viewBox="-2 -2 944 388" style="max-width:944px;margin:0 auto" role="img" aria-label="조인 종류별 상태"><defs><marker id="f1762248-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f1762248-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f1762248-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f1762248-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f1762248-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="20" width="900" height="42" rx="10" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.1" opacity="1"/><text x="36" y="46" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">일반 조인</text><rect x="230" y="27" width="670" height="28" rx="6" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.3" opacity="1"/><text x="565.0" y="45.5" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">양쪽 전부 · 계속 쌓임</text><rect x="20" y="72" width="900" height="42" rx="10" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.1" opacity="1"/><text x="36" y="98" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">일반 조인 + TTL</text><rect x="230" y="79" width="390" height="28" rx="6" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.3" stroke-dasharray="4 3" opacity="1"/><text x="425.0" y="97.5" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">TTL 지나 지워짐</text><rect x="620" y="79" width="280" height="28" rx="6" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.3" opacity="1"/><text x="760.0" y="97.5" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">최근 TTL만큼</text><rect x="20" y="124" width="900" height="42" rx="10" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.1" opacity="1"/><text x="36" y="150" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">구간 조인</text><rect x="230" y="131" width="530" height="28" rx="6" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.3" stroke-dasharray="4 3" opacity="1"/><text x="495.0" y="149.5" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">워터마크 지나 지워짐</text><rect x="760" y="131" width="140" height="28" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.3" opacity="1"/><text x="830.0" y="149.5" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">±구간만</text><rect x="20" y="176" width="900" height="42" rx="10" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.1" opacity="1"/><text x="36" y="202" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">윈도우 조인</text><rect x="230" y="183" width="470" height="28" rx="6" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.3" stroke-dasharray="4 3" opacity="1"/><text x="465.0" y="201.5" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">닫힌 윈도우는 지워짐</text><rect x="700" y="183" width="200" height="28" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.3" opacity="1"/><text x="800.0" y="201.5" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">지금 윈도우만</text><rect x="20" y="228" width="900" height="42" rx="10" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.1" opacity="1"/><text x="36" y="254" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">temporal 조인</text><rect x="570" y="235" width="100" height="28" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.3" opacity="1"/><text x="620" y="253.5" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k1 v1</text><rect x="680" y="235" width="100" height="28" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.3" opacity="1"/><text x="730" y="253.5" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k1 v2</text><rect x="790" y="235" width="100" height="28" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.3" opacity="1"/><text x="840" y="253.5" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">k2 v1</text><text x="240" y="253.5" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">차원 쪽 키별 버전</text><rect x="20" y="280" width="900" height="42" rx="10" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.1" opacity="1"/><text x="36" y="306" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">lookup 조인</text><text x="240" y="305.5" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">상태 없음</text><rect x="750" y="287" width="150" height="28" rx="6" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.3" opacity="1"/><text x="825" y="305.5" font-size="12" style="fill:var(--acc)" font-weight="700" text-anchor="middle" opacity="1">외부 테이블 조회</text><path d="M230,340 L900,340" fill="none" style="stroke:var(--sub)" stroke-width="1.4" stroke-linejoin="round" marker-end="url(#f1762248-sub)"/><text x="230" y="360" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="1">과거</text><text x="900" y="360" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="end" opacity="1">지금</text></svg></div>
+      <h3>일반 조인</h3>
+      <pre class="code" data-lang="SQL"><code>A JOIN B ON A.id = B.id</code></pre>
+      <div class="fig"><svg viewBox="14 17 474 197" style="max-width:474px;margin:0 auto;min-width:0" role="img" aria-label="일반 조인 병목"><defs><marker id="f1328867-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f1328867-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f1328867-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f1328867-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f1328867-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="36" y="44" width="70" height="24" rx="7" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="71.0" y="60.37" font-size="11.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상품 A</text><rect x="36" y="75" width="70" height="24" rx="7" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="71.0" y="91.37" font-size="11.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상품 A</text><rect x="36" y="106" width="70" height="24" rx="7" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="71.0" y="122.37" font-size="11.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상품 B</text><rect x="36" y="137" width="70" height="24" rx="7" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="71.0" y="153.37" font-size="11.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상품 A</text><rect x="36" y="168" width="70" height="24" rx="7" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="71.0" y="184.37" font-size="11.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상품 A</text><rect x="170" y="50" width="110" height="36" rx="7" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.4" opacity="1"/><text x="225.0" y="72.56" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">서브태스크 0</text><rect x="296" y="58" width="170" height="20" rx="4" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="170" y="102" width="110" height="36" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="225.0" y="124.56" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">서브태스크 1</text><rect x="296" y="110" width="34" height="20" rx="4" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.2" opacity="1"/><rect x="170" y="154" width="110" height="36" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="225.0" y="176.56" font-size="12" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">서브태스크 2</text><rect x="296" y="162" width="34" height="20" rx="4" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.2" opacity="1"/><text x="381" y="51" font-size="11.5" style="fill:var(--bad)" font-weight="700" text-anchor="middle" opacity="1">상태</text><path d="M110,56 L166,66" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1328867-warn)"/><path d="M110,118 L166,76" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1328867-warn)"/><path d="M110,180 L166,82" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1328867-warn)"/><path d="M110,118 L166,120" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1328867-acc)"/></svg></div>
+      <ul>
+        <li><b>상태</b>
+          <ul>
+            <li>양쪽 전부, 지우지 않음</li>
+            <li>TTL을 걸면 그만큼 지나 지움</li>
+            <li>TTL 뒤에 온 짝은 못 만남</li>
+          </ul></li>
+        <li><b>결과</b>
+          <ul>
+            <li>inner: 추가만</li>
+            <li>outer: 짝이 늦게 오면 앞서 낸 결과를 고침</li>
+          </ul></li>
+        <li><b>사례</b>
+          <ul>
+            <li>주문 × 결제</li>
+            <li>언제 짝이 올지 모름</li>
+          </ul></li>
+        <li><b>병목</b>
+          <ul>
+            <li>인기 상품 키에 레코드가 몰려 한 서브태스크만 바쁨 (핫 키)</li>
+            <li>그 서브태스크의 상태만 끝없이 커져 체크포인트 · 복구가 느려짐</li>
+            <li>같은 키에 쌓인 레코드가 많으면 짝 하나에 결과 N개가 쏟아짐</li>
+            <li>outer 조인은 늦은 짝마다 앞선 결과를 고쳐 하류 부하가 큼</li>
+          </ul></li>
+        <li><b>대응</b>
+          <ul>
+            <li>TTL로 보관 기간 제한</li>
+            <li>핫 키는 키에 접미사를 붙여 나눈 뒤 다시 합침</li>
+            <li>가능하면 구간 조인으로 바꿈</li>
+          </ul></li>
+      </ul>
+      <h3>구간 조인 (interval)</h3>
+      <pre class="code" data-lang="SQL"><code>… AND A.ts BETWEEN B.ts - INTERVAL '30' MINUTE AND B.ts</code></pre>
+      <div class="fig"><svg viewBox="22 18 476 213" style="max-width:476px;margin:0 auto;min-width:0" role="img" aria-label="구간 조인 병목"><defs><marker id="f1313963-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f1313963-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f1313963-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f1313963-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f1313963-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="60" y="70" width="32" height="26" rx="4" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="100" y="70" width="32" height="26" rx="4" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="140" y="70" width="32" height="26" rx="4" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="180" y="70" width="32" height="26" rx="4" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="220" y="70" width="32" height="26" rx="4" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="260" y="70" width="32" height="26" rx="4" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="300" y="70" width="32" height="26" rx="4" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><text x="190" y="116" font-size="11.5" style="fill:var(--bad)" font-weight="700" text-anchor="middle" opacity="1">지울 때가 지났지만 못 지운 상태</text><rect x="350" y="70" width="110" height="26" rx="4" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.3" opacity="1"/><text x="405" y="88" font-size="11.5" style="fill:var(--ok)" font-weight="700" text-anchor="middle" opacity="1">±구간</text><line x1="50" y1="58" x2="50" y2="176" style="stroke:var(--warn)" stroke-width="2" stroke-dasharray="5 4"/><text x="50" y="52" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1"></text><text x="44" y="52" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="start" opacity="1">워터마크 (멈춤)</text><rect x="220" y="140" width="160" height="26" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" stroke-dasharray="4 3" opacity="1"/><text x="300.0" y="157.37" font-size="11.5" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">쉬는 파티션 · 데이터 없음</text><path d="M50,190 L470,190" fill="none" style="stroke:var(--sub)" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#f1313963-sub)"/><text x="470" y="205" font-size="11" style="fill:var(--sub)" font-weight="600" text-anchor="end" opacity="1">지금</text></svg></div>
+      <ul>
+        <li><b>상태</b>
+          <ul>
+            <li>시간 구간 안의 양쪽 레코드</li>
+            <li>워터마크가 구간을 지나면 지움</li>
+          </ul></li>
+        <li><b>결과</b>
+          <ul>
+            <li>추가만</li>
+          </ul></li>
+        <li><b>사례</b>
+          <ul>
+            <li>광고 노출 × 클릭</li>
+            <li>노출 후 30분 안의 클릭만</li>
+          </ul></li>
+        <li><b>병목</b>
+          <ul>
+            <li>워터마크가 멈추면(쉬는 파티션) 지울 시점이 안 와 상태가 계속 쌓임</li>
+            <li>구간을 넓게 잡으면 그만큼 상태가 큼</li>
+            <li>두 스트림의 지연 차가 크면 빠른 쪽을 오래 들고 있음</li>
+          </ul></li>
+        <li><b>대응</b>
+          <ul>
+            <li>쉬는 파티션 제외 (<a href="dataflow.html#c2">워터마크</a>)</li>
+            <li>구간을 실제 필요만큼만</li>
+          </ul></li>
+      </ul>
+      <h3>윈도우 조인</h3>
+      <pre class="code" data-lang="SQL"><code>같은 윈도우 TVF(TUMBLE 등)를 씌운 두 테이블을 window_start · window_end로 조인</code></pre>
+      <div class="fig"><svg viewBox="22 30 476 184" style="max-width:476px;margin:0 auto;min-width:0" role="img" aria-label="윈도우 조인 병목"><defs><marker id="f1675641-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f1675641-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f1675641-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f1675641-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f1675641-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="50" y="52" width="136" height="24" rx="5" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="118" y="69" font-size="11.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">윈도우 1</text><rect x="170" y="92" width="16" height="78" rx="3" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.3" opacity="1"/><rect x="190" y="52" width="136" height="24" rx="5" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="258" y="69" font-size="11.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">윈도우 2</text><rect x="310" y="92" width="16" height="78" rx="3" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.3" opacity="1"/><rect x="330" y="52" width="136" height="24" rx="5" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="398" y="69" font-size="11.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">윈도우 3</text><rect x="450" y="92" width="16" height="78" rx="3" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.3" opacity="1"/><text x="60" y="136" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="start" opacity="1">결과</text><path d="M50,186 L470,186" fill="none" style="stroke:var(--sub)" stroke-width="1.3" stroke-linejoin="round" marker-end="url(#f1675641-sub)"/></svg></div>
+      <ul>
+        <li><b>상태</b>
+          <ul>
+            <li>지금 윈도우의 양쪽 레코드</li>
+            <li>윈도우가 닫히면 지움</li>
+          </ul></li>
+        <li><b>결과</b>
+          <ul>
+            <li>추가만</li>
+          </ul></li>
+        <li><b>사례</b>
+          <ul>
+            <li>1분 단위 주문 수 × 1분 단위 방문 수</li>
+          </ul></li>
+        <li><b>병목</b>
+          <ul>
+            <li>윈도우가 닫힐 때 결과가 한꺼번에 나와 순간 부하</li>
+            <li>워터마크보다 늦은 데이터는 버려짐</li>
+          </ul></li>
+        <li><b>대응</b>
+          <ul>
+            <li>윈도우 크기 · 허용 지연 조정</li>
+          </ul></li>
+      </ul>
+      <h3>temporal 조인 (이벤트 시간)</h3>
+      <pre class="code" data-lang="SQL"><code>A JOIN B FOR SYSTEM_TIME AS OF A.ts ON …</code></pre>
+      <div class="fig"><svg viewBox="14 34 472 180" style="max-width:472px;margin:0 auto;min-width:0" role="img" aria-label="temporal 조인 병목"><defs><marker id="f2376742-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f2376742-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f2376742-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f2376742-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f2376742-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><text x="36" y="78" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">주문</text><text x="36" y="148" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">환율</text><rect x="110" y="132" width="60" height="24" rx="4" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.2" opacity="1"/><text x="140" y="149" font-size="11.5" style="fill:var(--ok)" font-weight="700" text-anchor="middle" opacity="1">변경</text><rect x="180" y="56" width="284" height="36" rx="6" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.2" stroke-dasharray="4 3" opacity="1"/><rect x="90" y="62" width="36" height="24" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><rect x="136" y="62" width="36" height="24" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><rect x="182" y="62" width="36" height="24" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><rect x="228" y="62" width="36" height="24" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><rect x="274" y="62" width="36" height="24" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><rect x="320" y="62" width="36" height="24" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><rect x="366" y="62" width="36" height="24" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><rect x="412" y="62" width="36" height="24" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="324" y="106" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">결과 대기</text><line x1="180" y1="120" x2="180" y2="192" style="stroke:var(--warn)" stroke-width="2" stroke-dasharray="5 4"/><text x="180" y="114" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1"></text><text x="192" y="182" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="start" opacity="1">환율 워터마크 (멈춤)</text></svg></div>
+      <ul>
+        <li><b>상태</b>
+          <ul>
+            <li>차원 쪽의 키별 버전</li>
+            <li>워터마크가 지나 더 안 쓰일 옛 버전은 지움</li>
+            <li>B는 기본 키 + 이벤트 시간이 있는 버전 테이블, 양쪽 모두 워터마크 필요</li>
+          </ul></li>
+        <li><b>결과</b>
+          <ul>
+            <li>추가만</li>
+            <li>차원이 나중에 바뀌어도 앞서 낸 결과는 안 고침</li>
+          </ul></li>
+        <li><b>사례</b>
+          <ul>
+            <li>주문 × 환율 (주문 시점의 환율)</li>
+            <li>이벤트 × 상품 가격 CDC</li>
+          </ul></li>
+        <li><b>병목</b>
+          <ul>
+            <li>차원 쪽 변경이 드물면 그쪽 워터마크가 안 올라감</li>
+            <li>결과는 낮은 쪽 워터마크까지만 나와 주문이 "결과 대기"에 묶임</li>
+            <li>차원 키가 많으면 버전 상태가 큼</li>
+          </ul></li>
+        <li><b>대응</b>
+          <ul>
+            <li>차원 쪽 쉬는 소스 제외 (<code>table.exec.source.idle-timeout</code>)</li>
+          </ul></li>
+      </ul>
+      <h3>lookup 조인</h3>
+      <pre class="code" data-lang="SQL"><code>A JOIN B FOR SYSTEM_TIME AS OF A.proc_time ON …</code></pre>
+      <div class="fig"><svg viewBox="28 32 914 164" style="max-width:914px;margin:0 auto" role="img" aria-label="lookup 조인 병목"><defs><marker id="f1978091-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f1978091-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f1978091-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f1978091-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f1978091-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="50" y="70" width="90" height="40" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="95.0" y="94.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">소스</text><rect x="180" y="76" width="20" height="28" rx="3" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="206" y="76" width="20" height="28" rx="3" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="232" y="76" width="20" height="28" rx="3" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="258" y="76" width="20" height="28" rx="3" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><rect x="284" y="76" width="20" height="28" rx="3" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.2" opacity="1"/><text x="232" y="126" font-size="11.5" style="fill:var(--bad)" font-weight="700" text-anchor="middle" opacity="1">버퍼 가득</text><rect x="340" y="64" width="150" height="52" rx="7" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="415.0" y="94.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">조인 서브태스크</text><path d="M144,90 L174,90" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1978091-sub)"/><path d="M314,90 L336,90" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1978091-sub)"/><path d="M415,118 L415,136" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1978091-ok)"/><rect x="375" y="140" width="80" height="32" rx="7" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="415.0" y="160.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">결과</text><rect x="720" y="64" width="200" height="52" rx="7" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="1.4" opacity="1"/><text x="820.0" y="94.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">외부 DB · 조회 느림</text><path d="M490,76 L716,76" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round" marker-end="url(#f1978091-acc)"/><path d="M716,104 L490,104" fill="none" style="stroke:var(--bad)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round" marker-end="url(#f1978091-bad)"/><text x="603" y="66" font-size="11.5" style="fill:var(--acc)" font-weight="700" text-anchor="middle" opacity="1">레코드마다 조회</text><text x="603" y="126" font-size="11.5" style="fill:var(--bad)" font-weight="700" text-anchor="middle" opacity="1">늦은 응답</text><path d="M320,152 L95,152 L95,114" fill="none" style="stroke:var(--bad)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round" marker-end="url(#f1978091-bad)"/><text x="210" y="170" font-size="11.5" style="fill:var(--bad)" font-weight="700" text-anchor="middle" opacity="1">백프레셔</text></svg></div>
+      <ul>
+        <li><b>상태</b>
+          <ul>
+            <li>없음 (캐시는 선택)</li>
+            <li>B는 조회를 지원하는 소스 (JDBC · Paimon 등)</li>
+          </ul></li>
+        <li><b>결과</b>
+          <ul>
+            <li>추가만</li>
+            <li>조회한 순간의 값을 붙임</li>
+          </ul></li>
+        <li><b>사례</b>
+          <ul>
+            <li>클릭 로그 × 상품 메타 DB</li>
+          </ul></li>
+        <li><b>병목</b>
+          <ul>
+            <li>레코드마다 외부 조회 → 조회 지연이 곧 처리 지연</li>
+            <li>버퍼가 차서 백프레셔가 소스까지 번짐</li>
+            <li>외부 DB에 조회 부하가 몰림</li>
+            <li>메타가 로그보다 늦게 생기면 못 붙음</li>
+          </ul></li>
+        <li><b>대응</b>
+          <ul>
+            <li>비동기 조회 · 캐시 (캐시는 최신성과 교환)</li>
+            <li><code>LOOKUP</code> 힌트로 못 찾으면 재시도</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter" id="c3">
+      <h2><span class="no">3</span>고르는 기준</h2>
+      <div class="table-wrap"><table>
+        <tr><th>상황</th><th>조인</th></tr>
+        <tr><td><ul><li>양쪽 다 이벤트 스트림</li><li>짝이 일정 시간 안에 옴 (클릭 후 30분 안의 주문)</li></ul></td><td>구간 조인</td></tr>
+        <tr><td><ul><li>같은 시간 단위로 묶어 맞춤</li></ul></td><td>윈도우 조인</td></tr>
+        <tr><td><ul><li>이벤트에 "그 시점의" 차원 값을 붙여야 함</li><li>차원도 변경 스트림 (CDC)</li></ul></td><td>temporal 조인</td></tr>
+        <tr><td><ul><li>차원이 DB · 테이블에 있음</li><li>조회 순간의 최신 값이면 충분</li></ul></td><td>lookup 조인</td></tr>
+        <tr><td><ul><li>짝이 언제 올지 모르고 시간 제한도 못 정함</li></ul></td><td>일반 조인 + TTL</td></tr>
+      </table></div>
+      <h3>대가</h3>
+      <ul>
+        <li><b>TTL</b>
+          <ul>
+            <li>TTL이 지난 뒤 온 짝은 조인되지 않아 결과가 빠짐</li>
+          </ul></li>
+        <li><b>lookup</b>
+          <ul>
+            <li>차원이 이벤트보다 늦게 들어오면 못 붙음 → <code>LOOKUP</code> 힌트의 재시도로 보완</li>
+            <li>매 레코드 외부 조회라 느림 → 비동기 조회와 캐시로 보완</li>
+          </ul></li>
+        <li><b>temporal</b>
+          <ul>
+            <li>워터마크를 기다려 결과를 내므로 지연이 생김</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter" id="c4">
+      <h2><span class="no">4</span>상태 백엔드와의 관계</h2>
+      <ul>
+        <li><b>조인의 대기 데이터 = 키별 상태</b>
+          <ul>
+            <li><a href="#c1">조인이 상태를 쌓는 이유</a>의 "클릭 대기 · 주문 대기"가 <a href="state-backend.html">상태 백엔드</a>에 키별로 저장됨</li>
+            <li>서브태스크마다 자기 키 그룹의 대기 데이터만 가짐</li>
+          </ul></li>
+        <li><b>상태가 크면 RocksDB</b>
+          <ul>
+            <li>일반 조인 · 넓은 구간 조인은 GB 단위로 커지기 쉬움</li>
+            <li>힙에 안 들어가면 RocksDB, 증분 체크포인트를 같이 켬</li>
+          </ul></li>
+        <li><b>TTL이 디스크를 줄이는 때</b>
+          <ul>
+            <li>RocksDB에서는 만료된 값이 <a href="state-backend.html#c6">컴팩션</a> 때 실제로 지워짐</li>
+          </ul></li>
+        <li><b>상태 크기가 곧 체크포인트 크기</b>
+          <ul>
+            <li>조인 상태가 크면 체크포인트 업로드 · 복구 다운로드가 함께 느려짐</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter" id="c5">
+      <h2><span class="no">5</span>설정 한눈에</h2>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>기본값</th><th>설명</th></tr>
+        <tr><td><code>table.exec.state.ttl</code></td><td>0 ms (안 지움)</td><td><ul><li>잡 전체 상태 TTL</li><li>일정 시간 갱신 안 된 상태를 지움</li></ul></td></tr>
+        <tr><td><code>/*+ STATE_TTL('A'='1d', 'B'='12h') */</code></td><td>—</td><td><ul><li>일반 조인 · 집계에 연산자 단위 TTL</li><li>위 잡 전체 값보다 우선</li></ul></td></tr>
+        <tr><td><code>/*+ LOOKUP('table'='B', 'async'='true', …) */</code></td><td>—</td><td><ul><li>lookup 조인의 비동기 · 재시도</li><li>재시도: <code>'retry-predicate'='lookup_miss'</code>, <code>'retry-strategy'='fixed_delay'</code>, <code>'fixed-delay'</code>, <code>'max-attempts'</code>를 함께 지정</li></ul></td></tr>
+        <tr><td><code>lookup.cache</code></td><td>NONE</td><td><ul><li>PARTIAL로 켜면 조회 결과를 캐시</li><li>커넥터 옵션 (JDBC 기준)</li></ul></td></tr>
+        <tr><td><code>lookup.partial-cache.max-rows</code><br><code>lookup.partial-cache.expire-after-write</code></td><td>없음</td><td><ul><li>캐시 크기 · 유효 시간</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c6">
+      <h2><span class="no">6</span>한 장 요약</h2>
+      <ul>
+        <li><b>원인</b>
+          <ul>
+            <li>조인은 짝을 기다리느라 양쪽을 상태에 보관</li>
+            <li>보관 기간이 없으면 상태가 끝없이 커짐</li>
+          </ul></li>
+        <li><b>종류</b>
+          <ul>
+            <li>일반 — 전부 영원히, TTL로 제한</li>
+            <li>구간 · 윈도우 — 시간 범위만, 워터마크로 지움</li>
+            <li>temporal — 차원의 버전만</li>
+            <li>lookup — 상태 없이 외부 조회</li>
+          </ul></li>
+        <li><b>병목</b>
+          <ul>
+            <li>일반 · 구간 · temporal — 상태가 커지거나 워터마크가 멈춰 안 지워짐</li>
+            <li>lookup — 외부 조회 지연이 백프레셔로 번짐</li>
+            <li>공통 — 핫 키가 한 서브태스크에 몰림</li>
+          </ul></li>
+        <li><b>상태 백엔드</b>
+          <ul>
+            <li>조인 대기 데이터가 곧 키별 상태 → 크면 RocksDB + 증분 체크포인트</li>
+          </ul></li>
+        <li><b>고르기</b>
+          <ul>
+            <li>짝이 오는 시간을 알면 구간 조인, 차원이면 temporal · lookup</li>
+            <li>TTL은 늦게 온 짝을 놓치는 대가가 있음</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <nav class="pager">
+      <a href="state-backend.html"><small>← 이전</small>상태 백엔드와 캐싱</a>
+      <a href="sink-exactly-once.html" style="text-align:right"><small>다음 →</small>싱크의 exactly-once</a>
+    </nav>
+  </main>
+</div>
+<footer class="site-foot">© 2026 dev-donghwan · <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/deed.ko" rel="license noopener" target="_blank">CC BY-NC-ND 4.0</a> · 출처를 밝히면 공유할 수 있고, 상업적 이용과 변경은 허락하지 않습니다.</footer>
+<script src="../assets/site.js"></script>
+</body>
+</html>

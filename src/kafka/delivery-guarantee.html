@@ -1,0 +1,473 @@
+<!--
+title: Kafka 유실 · 중복 · exactly-once
+description: Kafka를 운영하며 유실과 중복이 생기는 자리와 막는 방법, 트랜잭션으로 exactly-once를 만드는 범위
+lead: 메시지가 프로듀서에서 외부 저장까지 가는 동안 어디서 사라지고 어디서 두 번 남는지, 각각 무엇으로 막는지.
+-->
+    <section class="chapter">
+      <h2 data-toc="전달 보장과 지도">전달 보장과 유실 · 중복 지도</h2>
+      <p class="lead">유실부터 막아 at-least-once를 만들고, 그래서 남는 중복을 없애 exactly-once로 간다.</p>
+
+      <h3>전달 보장 세 단계</h3>
+      <div class="table-wrap"><table>
+        <tr><th>보장</th><th>뜻</th><th>만드는 법</th></tr>
+        <tr><td>at-most-once</td><td><ul><li>유실 가능</li><li>중복 없음</li></ul></td><td><ul><li>재시도 없음</li><li>처리 전에 커밋</li></ul></td></tr>
+        <tr><td>at-least-once</td><td><ul><li>유실 없음</li><li>중복 가능</li></ul></td><td><ul><li>재시도</li><li>처리 후에 커밋</li></ul></td></tr>
+        <tr><td>exactly-once</td><td><ul><li>결과가 한 번만 남음</li></ul></td><td><ul><li>at-least-once + 멱등</li><li>또는 원자적 커밋 (트랜잭션)</li></ul></td></tr>
+      </table></div>
+
+      <h3>어디서 생기나</h3>
+      <!--fig:kafka-map-->
+      <div class="table-wrap"><table>
+        <tr><th>구역</th><th>유실</th><th>중복</th></tr>
+        <tr><td><a href="#c2">1. 프로듀서</a></td><td><ul><li>재시도 실패를 버림</li><li>DB 커밋 뒤 <code>send()</code> 전에 죽음</li></ul></td><td><ul><li>응답을 못 받아 재전송</li></ul></td></tr>
+        <tr><td><a href="#c3">2. 브로커</a></td><td><ul><li>복사 전에 리더가 죽음</li><li>unclean 선출</li><li>복제본이 동시에 죽음</li></ul></td><td><ul><li>없음</li></ul></td></tr>
+        <tr><td><a href="#c4">3. 컨슈머</a></td><td><ul><li>처리 전에 커밋</li><li>읽기 전에 보존 기간이 지남</li></ul></td><td><ul><li>처리 후 커밋 전에 죽음</li><li>리밸런스</li></ul></td></tr>
+      </table></div>
+      <ul class="figcap"><li>구역마다 유실을 막는 개념 → 중복을 막는 개념 순서로 본다</li></ul>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="프로듀서">프로듀서</h2>
+      <p class="lead">유실은 콜백 에러 처리와 outbox로, 중복은 멱등 프로듀서로 막는다.</p>
+
+      <h3>콜백 에러 처리</h3>
+      <!--fig:kafka-send-callback-->
+      <ul>
+        <li><b>무슨 일이 생기나</b>
+          <ul>
+            <li><code>send()</code>는 버퍼에 넣고 바로 반환. 반환됐다고 저장된 게 아님</li>
+            <li>재시도가 <code>delivery.timeout.ms</code>(기본 120초) 안에 끝나지 않으면 실패로 끝나고, 이 실패는 콜백 · <code>Future</code>로만 알 수 있음</li>
+            <li>콜백에서 로그만 찍고 넘어가면 그 레코드가 없어진 걸 아무도 모름</li>
+          </ul></li>
+        <li><b>막는 법</b>
+          <ul>
+            <li>콜백에서 재처리 큐에 넣거나, 앱을 멈추고 원천에서 다시 읽게 함</li>
+          </ul></li>
+      </ul>
+
+      <h3>outbox</h3>
+      <ul>
+        <li><b>무슨 일이 생기나</b>
+          <ul>
+            <li>DB 커밋과 <code>send()</code>는 한 번에 성공하지 않음</li>
+            <li>DB 커밋 뒤 <code>send()</code> 전에 죽으면 주문은 있는데 이벤트는 사라짐</li>
+          </ul></li>
+        <li><b>막는 법</b>
+          <ul>
+            <li>이벤트를 Kafka 대신 같은 DB의 outbox 테이블에, 업무 데이터와 한 트랜잭션으로 씀</li>
+            <li>별도 릴레이가 outbox를 읽어 Kafka로 보냄</li>
+          </ul></li>
+      </ul>
+      <!--fig:kafka-outbox-flow-->
+      <ol>
+        <li><b>한 트랜잭션으로 기록</b>
+          <ul>
+            <li>주문 INSERT와 outbox INSERT를 같은 트랜잭션에서 COMMIT</li>
+            <li>둘 다 남거나 둘 다 없음 → 주문과 이벤트가 어긋나지 않음</li>
+          </ul></li>
+        <li><b>미발행 행 읽기</b>
+          <ul>
+            <li>릴레이가 아직 안 보낸 행을 읽음 (주기적으로 조회하는 폴러, 또는 DB 변경 로그를 읽는 CDC)</li>
+          </ul></li>
+        <li><b>Kafka로 보냄</b>
+          <ul>
+            <li>키 = 주문 id → 같은 주문의 이벤트는 같은 파티션에 순서대로</li>
+          </ul></li>
+        <li><b>발행 완료 기록</b>
+          <ul>
+            <li>성공 응답을 받은 뒤에만 보냈다고 기록</li>
+            <li>3번 뒤 4번 전에 죽으면 다시 보냄 → 중복은 받는 쪽 <a href="#c4">inbox</a>가 <code>event_id</code>로 거름</li>
+          </ul></li>
+      </ol>
+
+      <h3>멱등 프로듀서</h3>
+      <!--fig:kafka-idempotent-->
+      <ol>
+        <li><b>seq 7 보냄</b>
+          <ul>
+            <li>프로듀서는 시작할 때 브로커에게 PID(producer id)를 받음</li>
+            <li>파티션마다 배치에 0부터 1씩 느는 seq를 붙여 보냄</li>
+            <li>브로커는 (PID, 파티션)별로 마지막 seq를 기억</li>
+          </ul></li>
+        <li><b>응답 유실</b>
+          <ul>
+            <li>로그에는 저장됐지만 응답이 네트워크에서 사라짐</li>
+            <li>프로듀서는 실패로 알고 재전송</li>
+          </ul></li>
+        <li><b>seq 7 재전송</b>
+          <ul>
+            <li>브로커가 이미 받은 seq임을 보고 저장하지 않고 성공만 응답</li>
+          </ul></li>
+        <li><b>멱등 끄면</b>
+          <ul>
+            <li>번호가 없어 브로커가 구분 못 함 → 같은 레코드가 두 번 저장</li>
+          </ul></li>
+      </ol>
+      <div class="table-wrap"><table>
+        <tr><th>경우</th><th>막나</th><th>이유</th></tr>
+        <tr><td>같은 프로듀서 인스턴스의 재전송</td><td>막음</td><td><ul><li>같은 PID · 같은 seq</li></ul></td></tr>
+        <tr><td>재전송 중 순서 뒤바뀜</td><td>막음</td><td><ul><li>seq가 비면 브로커가 거절하고 다시 받음</li><li>그래서 <code>max.in.flight.requests.per.connection</code> 5 이하에서 순서 유지</li></ul></td></tr>
+        <tr><td>앱 재시작 후 같은 데이터를 다시 보냄</td><td>못 막음</td><td><ul><li>재시작하면 새 PID를 받음</li><li>outbox 재발행도 여기에 해당 → inbox로 거름</li></ul></td></tr>
+        <tr><td>앱이 같은 데이터를 두 번 <code>send()</code></td><td>못 막음</td><td><ul><li>seq가 다르게 붙음</li></ul></td></tr>
+        <tr><td>여러 파티션에 걸친 원자성</td><td>못 막음</td><td><ul><li>seq는 파티션별</li><li>여러 파티션을 한 번에 → <a href="#c5">트랜잭션</a></li></ul></td></tr>
+      </table></div>
+      <ul class="figcap"><li>트랜잭션 없는 프로듀서의 PID 상태는 브로커가 <code>producer.id.expiration.ms</code>(기본 1일) 동안 기억</li></ul>
+
+      <h3>설정</h3>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>기본값</th><th>권장 (예시)</th><th>막는 것</th></tr>
+        <tr><td><code>acks</code></td><td>all</td><td><ul><li>all</li></ul></td><td><ul><li>리더 장애 시 유실 (<a href="#c3">브로커</a>)</li></ul></td></tr>
+        <tr><td><code>retries</code></td><td>Integer 최댓값</td><td><ul><li>기본값</li></ul></td><td><ul><li>일시 장애로 인한 유실</li></ul></td></tr>
+        <tr><td><code>delivery.timeout.ms</code></td><td>120초</td><td><ul><li>기본값 + 콜백 에러 처리</li></ul></td><td><ul><li>조용한 전송 실패</li></ul></td></tr>
+        <tr><td><code>enable.idempotence</code></td><td>true</td><td><ul><li>true</li></ul></td><td><ul><li>재전송 중복 · 순서 뒤바뀜</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="브로커">브로커</h2>
+      <p class="lead">"성공 응답을 받은 레코드는 사라지지 않는다"를 복제로 보장한다. 브로커에서는 유실만 생긴다.</p>
+
+      <h3>ISR과 HW</h3>
+      <ul>
+        <li><b>ISR</b>
+          <ul>
+            <li>리더와, 리더를 따라잡은 팔로워의 집합. 리더는 ISR 안에서만 새로 뽑힘</li>
+          </ul></li>
+        <li><b>HW</b>
+          <ul>
+            <li>ISR 전원이 가진 위치. 컨슈머는 HW 앞까지만 읽음</li>
+          </ul></li>
+      </ul>
+      <p class="figcap">동작 원리는 <a href="replication.html">복제와 ISR</a>.</p>
+
+      <h3><code>acks</code>와 <code>min.insync.replicas</code></h3>
+      <!--fig:kafka-acks-->
+      <ol>
+        <li><b>성공 응답</b>
+          <ul>
+            <li><code>acks=1</code>은 리더 로그에 쓰면 바로 응답</li>
+            <li><code>acks=all</code>은 ISR 안의 복제본이 모두 받아야 응답</li>
+          </ul></li>
+        <li><b>리더 장애</b>
+          <ul>
+            <li>ISR 안의 팔로워 하나가 새 리더가 됨</li>
+          </ul></li>
+        <li><b>결과</b>
+          <ul>
+            <li><code>acks=1</code>: 새 리더에 없는 4, 5는 사라짐. 프로듀서는 이미 성공으로 알고 있음</li>
+            <li><code>acks=all</code>: 응답한 레코드는 ISR 전원에 있으므로 새 리더에도 있음</li>
+          </ul></li>
+      </ol>
+      <ul>
+        <li><b><code>min.insync.replicas</code>가 있어야 <code>acks=all</code>이 의미 있음</b>
+          <ul>
+            <li>ISR이 리더 하나로 줄면 <code>acks=all</code>도 리더 혼자 받고 응답함 → <code>acks=1</code>과 같아짐</li>
+            <li><code>min.insync.replicas=2</code>면 ISR이 2 미만일 때 쓰기를 거절 (<code>NotEnoughReplicas</code>). 유실 대신 쓰기 실패를 고르는 것</li>
+            <li>복제 계수 3 + 최소 2로 브로커 하나는 죽어도 쓸 수 있게 함</li>
+          </ul></li>
+      </ul>
+
+      <h3>unclean 리더 선출</h3>
+      <!--fig:kafka-unclean-->
+      <ol>
+        <li><b>ISR이 리더 하나로 줄어듦</b>
+          <ul>
+            <li>B는 3까지만 받고 뒤처져 ISR에서 빠짐</li>
+            <li><code>min.insync.replicas=1</code>이면 A 혼자 4 ~ 6을 받고 성공 응답을 보냄</li>
+          </ul></li>
+        <li><b>A 장애</b>
+          <ul>
+            <li>ISR에 남은 복제본이 없음</li>
+          </ul></li>
+        <li><b>unclean 끔 (기본값)</b>
+          <ul>
+            <li>리더를 뽑지 않고 파티션이 멈춤. 유실 대신 가용성을 포기</li>
+          </ul></li>
+        <li><b>unclean 켬</b>
+          <ul>
+            <li>ISR 밖의 B가 리더가 됨 → A에만 있던 4 ~ 6 유실</li>
+            <li>프로듀서는 4 ~ 6의 성공 응답을 이미 받았음</li>
+          </ul></li>
+      </ol>
+      <ul class="figcap"><li><code>min.insync.replicas=2</code>였다면 1번에서 쓰기가 거절되어 4 ~ 6이 성공으로 남지 않는다</li></ul>
+
+      <h3>fsync 대신 복제</h3>
+      <ul>
+        <li><b>무슨 일이 생기나</b>
+          <ul>
+            <li>브로커는 레코드마다 디스크에 fsync하지 않음 (<code>log.flush.interval.messages</code> 기본값 = Long 최댓값)</li>
+            <li>응답 시점에는 여러 브로커의 페이지 캐시에 있음. 복제본이 모두 동시에 전원을 잃으면 사라짐</li>
+          </ul></li>
+        <li><b>막는 법</b>
+          <ul>
+            <li>복제본을 다른 랙 · 다른 존에 둬서 동시에 죽지 않게 함</li>
+          </ul></li>
+      </ul>
+
+      <h3>설정</h3>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>기본값</th><th>권장 (예시)</th><th>막는 것</th></tr>
+        <tr><td><code>default.replication.factor</code> · 토픽 복제 계수</td><td>1</td><td><ul><li>3</li></ul></td><td><ul><li>브로커 장애 시 유실</li></ul></td></tr>
+        <tr><td><code>min.insync.replicas</code></td><td>1</td><td><ul><li>2</li></ul></td><td><ul><li>ISR이 줄었을 때 <code>acks=all</code>이 무의미해지는 것</li></ul></td></tr>
+        <tr><td><code>unclean.leader.election.enable</code></td><td>false</td><td><ul><li>false</li></ul></td><td><ul><li>복제 덜 된 리더로 인한 유실</li></ul></td></tr>
+      </table></div>
+      <ul class="figcap"><li>복제 계수와 <code>min.insync.replicas</code>는 기본값이 1이라 직접 올려야 한다</li></ul>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="컨슈머">컨슈머</h2>
+      <p class="lead">유실은 커밋 시점 · 자동 커밋 · 보존 기간에서, 중복은 재처리에서 생긴다. 재처리는 없앨 수 없으니 멱등하게 처리한다.</p>
+
+      <h3>커밋 시점</h3>
+      <!--fig:kafka-commit-->
+      <ul>
+        <li><b>처리 전에 커밋 → 유실</b>
+          <ul>
+            <li>재시작하면 커밋한 150부터 읽음 → 처리 못 한 101 ~ 150을 건너뜀 (at-most-once)</li>
+          </ul></li>
+        <li><b>처리 후에 커밋 → 중복</b>
+          <ul>
+            <li>재시작하면 마지막 커밋 101부터 읽음 → 처리한 101 ~ 150을 또 처리 (at-least-once)</li>
+          </ul></li>
+        <li><b>막는 법</b>
+          <ul>
+            <li>처리 후에 커밋해 유실을 막고, 남는 중복은 아래 멱등 소비로 없앰</li>
+          </ul></li>
+      </ul>
+
+      <h3>자동 커밋</h3>
+      <ul>
+        <li><b>무슨 일이 생기나</b>
+          <ul>
+            <li><code>enable.auto.commit=true</code>(기본값)면 <code>auto.commit.interval.ms</code>(기본 5초)마다 <code>poll()</code> 안에서 커밋</li>
+            <li>커밋하는 위치는 직전 <code>poll()</code>이 돌려준 레코드의 끝</li>
+            <li>다른 스레드로 넘기고 바로 다음 <code>poll()</code>을 부르면 처리가 안 끝난 위치가 커밋됨 → 유실</li>
+          </ul></li>
+        <li><b>막는 법</b>
+          <ul>
+            <li>poll 루프 안에서 다 처리하면 자동 커밋도 처리 후 커밋과 같아 안전</li>
+            <li>비동기로 처리하면 자동 커밋을 끄고, 끝난 위치 중 연속된 곳까지만 직접 커밋</li>
+          </ul></li>
+      </ul>
+
+      <h3>보존 기간과 오프셋 만료</h3>
+      <!--fig:kafka-retention-->
+      <ul>
+        <li><b>무슨 일이 생기나</b>
+          <ul>
+            <li>컨슈머가 150에 멈춘 사이 보존 기간이 지나 0 ~ 199 세그먼트가 삭제됨</li>
+            <li>다시 시작하면 150은 로그 범위 밖 → <code>auto.offset.reset</code>을 따름</li>
+            <li>기본값 <code>latest</code>면 400부터 읽어 150 ~ 399를 건너뜀</li>
+            <li>오래 멈춰 그룹 오프셋이 만료돼도(<code>offsets.retention.minutes</code> 기본 7일) 같은 결과</li>
+          </ul></li>
+        <li><b>막는 법</b>
+          <ul>
+            <li>lag 알림을 보존 기간보다 훨씬 짧은 기준으로 건다</li>
+            <li>유실이 더 나쁘면 <code>auto.offset.reset=earliest</code> (대신 남은 구간을 다시 처리)</li>
+          </ul></li>
+      </ul>
+
+      <h3>재처리가 생기는 상황</h3>
+      <div class="table-wrap"><table>
+        <tr><th>상황</th><th>왜 다시 읽나</th><th>줄이는 법</th></tr>
+        <tr><td>컨슈머 장애 · 재배포</td><td><ul><li>마지막 커밋 뒤부터 다시 읽음</li></ul></td><td><ul><li>커밋 주기를 짧게</li></ul></td></tr>
+        <tr><td>리밸런스</td><td><ul><li>파티션을 넘겨받은 컨슈머가 이전 주인의 마지막 커밋부터 읽음</li><li>이전 주인이 처리했지만 커밋 못 한 구간이 겹침</li></ul></td><td><ul><li>파티션을 뺏기기 직전에 커밋 (리밸런스 리스너)</li></ul></td></tr>
+        <tr><td>처리가 <code>max.poll.interval.ms</code>(기본 5분) 초과</td><td><ul><li>그룹에서 쫓겨나 리밸런스 → 커밋 실패 → 같은 구간을 다른 컨슈머가 다시 처리</li></ul></td><td><ul><li>값을 처리 시간보다 넉넉히</li><li><code>max.poll.records</code>를 줄임</li></ul></td></tr>
+      </table></div>
+      <ul class="figcap"><li>줄일 수만 있고 없앨 수는 없다. 그래서 처리 자체를 멱등하게 만든다</li></ul>
+
+      <h3>멱등 소비</h3>
+      <!--fig:kafka-external-->
+      <ul>
+        <li><b>무슨 일이 생기나</b>
+          <ul>
+            <li>DB에 쓰고 오프셋 커밋 전에 죽으면 101부터 다시 읽어 또 씀</li>
+          </ul></li>
+        <li><b>막는 법</b>
+          <ul>
+            <li>두 번 처리해도 결과가 한 번만 남게 씀. 처리 성격에 따라 고름</li>
+          </ul></li>
+      </ul>
+      <div class="table-wrap"><table>
+        <tr><th>방법</th><th>하는 일</th><th>맞는 경우</th></tr>
+        <tr><td>키로 덮어쓰기 (upsert)</td><td><ul><li>같은 키를 다시 쓰면 같은 결과</li></ul></td><td><ul><li>최신 상태를 저장 (프로필 · 상품 정보)</li><li>더하기 · 적립처럼 누적하는 처리에는 안 맞음</li></ul></td></tr>
+        <tr><td>inbox</td><td><ul><li>처리한 <code>event_id</code>를 기록하고, 이미 있으면 건너뜀</li></ul></td><td><ul><li>누적 · 상태 전이 (정산 적립, 재고 차감)</li><li>메시지에 고유 id가 있어야 함</li></ul></td></tr>
+        <tr><td>결과와 오프셋을 같이 저장</td><td><ul><li>처리 결과와 "읽은 위치"를 같은 DB 트랜잭션에 저장</li><li>시작할 때 DB의 위치로 <code>seek()</code></li></ul></td><td><ul><li>저장소가 하나일 때</li><li>Kafka 그룹 커밋은 쓰지 않음</li></ul></td></tr>
+        <tr><td>멱등 키 (외부 API)</td><td><ul><li>API에 <code>event_id</code>를 멱등 키로 넘겨 같은 요청을 한 번만 반영</li></ul></td><td><ul><li>결제 · 알림 같은 되돌릴 수 없는 호출</li><li>API가 지원하지 않으면 at-least-once를 받아들이고 보정</li></ul></td></tr>
+      </table></div>
+
+      <h3>inbox</h3>
+      <!--fig:kafka-inbox-flow-->
+      <ol>
+        <li><b>poll</b>
+          <ul>
+            <li>토픽에서 이벤트를 읽음. 보내는 쪽이 넣어 둔 <code>event_id</code>가 함께 옴</li>
+          </ul></li>
+        <li><b>event_id 기록</b>
+          <ul>
+            <li>DB 트랜잭션을 열고 inbox 테이블에 <code>event_id</code>를 넣음</li>
+            <li>이미 있으면 들어가지 않음(0건) → 이미 처리한 이벤트</li>
+          </ul></li>
+        <li><b>반영 또는 건너뜀</b>
+          <ul>
+            <li>1건 들어갔으면 정산에 반영, 0건이면 건너뜀</li>
+          </ul></li>
+        <li><b>COMMIT</b>
+          <ul>
+            <li>inbox 기록과 정산 반영이 함께 남거나 함께 없어짐</li>
+          </ul></li>
+        <li><b>오프셋 커밋</b>
+          <ul>
+            <li>DB COMMIT 뒤에 커밋. 그 사이에 죽어 다시 읽어도 2번에서 0건 → 한 번만 반영</li>
+          </ul></li>
+      </ol>
+
+      <h3>설정</h3>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>기본값</th><th>권장 (예시)</th><th>막는 것</th></tr>
+        <tr><td><code>enable.auto.commit</code></td><td>true</td><td><ul><li>poll 루프 안 동기 처리면 true</li><li>비동기 처리면 false + 직접 커밋</li></ul></td><td><ul><li>처리 전 커밋으로 인한 유실</li></ul></td></tr>
+        <tr><td><code>auto.offset.reset</code></td><td>latest</td><td><ul><li>유실이 더 나쁘면 earliest</li></ul></td><td><ul><li>오프셋 만료 · 범위 초과 시 건너뜀</li></ul></td></tr>
+        <tr><td><code>max.poll.interval.ms</code></td><td>5분</td><td><ul><li>처리 시간보다 넉넉히</li></ul></td><td><ul><li>처리 지연 → 리밸런스 → 중복</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="exactly-once">exactly-once</h2>
+      <p class="lead">at-least-once 위에서 중복을 없애는 방법은 두 가지다. 멱등하게 쓰거나, 결과와 위치를 한 번에 커밋한다.</p>
+
+      <h3>두 가지 길</h3>
+      <div class="table-wrap"><table>
+        <tr><th></th><th>at-least-once + 멱등</th><th>원자적 커밋</th></tr>
+        <tr><td>방법</td><td><ul><li>두 번 와도 결과가 같게 씀</li></ul></td><td><ul><li>결과와 읽은 위치를 함께 커밋하거나 함께 버림</li></ul></td></tr>
+        <tr><td>예</td><td><ul><li>멱등 프로듀서</li><li>upsert · inbox · 멱등 키</li></ul></td><td><ul><li>Kafka 트랜잭션</li><li>Flink 2단계 커밋</li><li>결과와 오프셋을 같은 DB에 저장</li></ul></td></tr>
+        <tr><td>조건</td><td><ul><li>고유 id나 키가 있어야 함</li></ul></td><td><ul><li>결과를 쓰는 곳이 트랜잭션을 지원해야 함</li></ul></td></tr>
+      </table></div>
+
+      <h3>Kafka 트랜잭션</h3>
+      <p class="figcap">Kafka에서 읽어 Kafka에 쓰는 처리에서, 출력과 입력 오프셋을 한 트랜잭션으로 묶는다.</p>
+      <!--fig:kafka-txn-->
+      <ol>
+        <li><b>begin</b>
+          <ul>
+            <li>앱이 트랜잭션을 시작 (클라이언트 안에서 상태만 바꿈)</li>
+          </ul></li>
+        <li><b>결과 send</b>
+          <ul>
+            <li>처음 쓰는 파티션은 코디네이터에 등록한 뒤 씀</li>
+            <li>결과는 출력 토픽에 실제로 들어가지만 <code>read_committed</code>로 읽는 쪽은 아직 못 봄</li>
+          </ul></li>
+        <li><b>오프셋 전달</b>
+          <ul>
+            <li><code>sendOffsetsToTransaction()</code>으로 입력 오프셋을 같은 트랜잭션에 넣음</li>
+            <li>컨슈머가 따로 커밋하지 않음</li>
+          </ul></li>
+        <li><b>commit</b>
+          <ul>
+            <li>코디네이터가 "커밋 준비"를 자기 로그(<code>__transaction_state</code>)에 먼저 기록</li>
+            <li>이 기록이 끝나면 앱이 죽어도 커밋은 끝까지 진행됨</li>
+          </ul></li>
+        <li><b>커밋 마커</b>
+          <ul>
+            <li>코디네이터가 등록된 모든 파티션에 커밋 마커를 씀</li>
+            <li>출력 결과와 오프셋이 함께 보임. 중간에 죽으면 함께 버려짐(abort 마커)</li>
+          </ul></li>
+      </ol>
+
+      <h3><code>read_committed</code>와 LSO</h3>
+      <ul>
+        <li><b>설정해야 동작</b>
+          <ul>
+            <li><code>isolation.level</code> 기본값은 <code>read_uncommitted</code> → 커밋 전 · abort된 레코드도 읽음</li>
+            <li>트랜잭션의 효과는 읽는 쪽이 <code>read_committed</code>일 때만 생김</li>
+          </ul></li>
+        <li><b>LSO (last stable offset)까지만 읽음</b>
+          <ul>
+            <li>LSO = 아직 안 끝난 트랜잭션 중 가장 오래된 것의 시작 위치</li>
+            <li>트랜잭션 하나가 오래 열려 있으면 그 뒤의 커밋된 레코드도 못 읽음 → lag이 쌓인 것처럼 보임</li>
+            <li>abort된 레코드는 브로커가 알려주는 목록으로 클라이언트가 걸러냄</li>
+          </ul></li>
+      </ul>
+
+      <h3><code>transactional.id</code>와 펜싱</h3>
+      <ul>
+        <li><b>문제</b>
+          <ul>
+            <li>멈춘 줄 알았던 옛 인스턴스(좀비)가 깨어나 같은 입력의 결과를 또 씀</li>
+          </ul></li>
+        <li><b>해결</b>
+          <ul>
+            <li>같은 일을 맡은 인스턴스는 같은 <code>transactional.id</code>를 씀</li>
+            <li>새 인스턴스가 <code>initTransactions()</code>를 부르면 코디네이터가 epoch를 올리고, 옛 인스턴스의 열린 트랜잭션은 abort</li>
+            <li>낮은 epoch로 오는 요청은 거절 (<code>ProducerFencedException</code>)</li>
+          </ul></li>
+        <li><b>트랜잭션 버전 2 (KIP-890, 4.0부터)</b>
+          <ul>
+            <li>트랜잭션이 끝날 때마다 epoch를 올림</li>
+            <li>앞 트랜잭션의 늦게 도착한 쓰기가 다음 트랜잭션에 섞이는 것(hanging transaction)을 브로커가 거절</li>
+          </ul></li>
+      </ul>
+
+      <h3>Kafka Streams</h3>
+      <ul>
+        <li><b><code>processing.guarantee=exactly_once_v2</code></b>
+          <ul>
+            <li>위 트랜잭션 과정을 프레임워크가 대신 함. 상태 저장소의 changelog 쓰기도 같은 트랜잭션에 들어감</li>
+            <li>기본값은 <code>at_least_once</code></li>
+            <li>켜면 <code>commit.interval.ms</code> 기본값이 30초 → 100ms로 바뀜 (결과가 빨리 보이게)</li>
+          </ul></li>
+      </ul>
+
+      <h3>Flink 2단계 커밋</h3>
+      <ul>
+        <li><b>체크포인트에 맞춘 트랜잭션</b>
+          <ul>
+            <li>체크포인트로 복구하면 바깥에 이미 쓴 결과가 남음 → 싱크가 트랜잭션으로 쓰고 체크포인트 완료 때 커밋</li>
+            <li>자세한 흐름은 <a href="../flink/sink-exactly-once.html">싱크의 exactly-once</a></li>
+            <li>Kafka 싱크라면 <code>transaction.timeout.ms</code>를 체크포인트 간격 + 복구 시간보다 길게, 브로커 최대값 이하로</li>
+          </ul></li>
+      </ul>
+
+      <h3>경로별로 고르기</h3>
+      <div class="table-wrap"><table>
+        <tr><th>경로</th><th>방법</th></tr>
+        <tr><td>Kafka → Kafka</td><td><ul><li>Kafka 트랜잭션 또는 Kafka Streams <code>exactly_once_v2</code></li><li>읽는 쪽 <code>read_committed</code></li></ul></td></tr>
+        <tr><td>DB → Kafka</td><td><ul><li><a href="#c2">outbox</a> + 멱등 프로듀서</li><li>남는 재발행 중복은 받는 쪽 inbox</li></ul></td></tr>
+        <tr><td>Kafka → DB</td><td><ul><li><a href="#c4">inbox</a> 또는 결과와 오프셋을 같은 DB에 저장</li></ul></td></tr>
+        <tr><td>Kafka → 외부 API</td><td><ul><li>멱등 키</li><li>없으면 at-least-once + 보정</li></ul></td></tr>
+        <tr><td>Kafka → Flink → 바깥</td><td><ul><li>Flink 2단계 커밋 싱크</li><li>지원하지 않는 싱크는 멱등 쓰기</li></ul></td></tr>
+      </table></div>
+
+      <h3>설정</h3>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>기본값</th><th>설명</th></tr>
+        <tr><td><code>isolation.level</code> (컨슈머)</td><td>read_uncommitted</td><td><ul><li>트랜잭션 토픽을 읽으면 read_committed</li></ul></td></tr>
+        <tr><td><code>transaction.timeout.ms</code> (프로듀서)</td><td>60초</td><td><ul><li>이 시간 안에 커밋 안 하면 코디네이터가 abort</li><li>커밋 주기보다 길게</li></ul></td></tr>
+        <tr><td><code>transaction.max.timeout.ms</code> (브로커)</td><td>15분</td><td><ul><li>프로듀서가 요청할 수 있는 최대값. 넘으면 초기화 실패</li></ul></td></tr>
+        <tr><td><code>transactional.id.expiration.ms</code> (브로커)</td><td>7일</td><td><ul><li>이 기간 동안 안 쓰인 <code>transactional.id</code> 상태를 지움</li></ul></td></tr>
+      </table></div>
+      <ul class="figcap"><li>이 문서의 기본값은 Kafka 4.4.0 소스 태그의 설정 정의 기준</li></ul>
+    </section>
+
+    <section class="chapter">
+      <h2>한 장 요약</h2>
+      <div class="table-wrap"><table>
+        <tr><th>구역</th><th>유실 막기</th><th>중복 막기</th></tr>
+        <tr><td><a href="#c2">프로듀서</a></td><td><ul><li>콜백 에러 처리</li><li>outbox</li></ul></td><td><ul><li>멱등 프로듀서</li></ul></td></tr>
+        <tr><td><a href="#c3">브로커</a></td><td><ul><li>복제 계수 3</li><li><code>acks=all</code> + <code>min.insync.replicas=2</code></li><li>unclean 선출 금지</li><li>복제본을 랙 · 존에 분산</li></ul></td><td><ul><li>해당 없음</li></ul></td></tr>
+        <tr><td><a href="#c4">컨슈머</a></td><td><ul><li>처리 후 커밋</li><li>비동기면 직접 커밋</li><li>lag 알림</li></ul></td><td><ul><li>upsert</li><li>inbox</li><li>결과와 오프셋 같이 저장</li><li>멱등 키</li></ul></td></tr>
+      </table></div>
+      <ul>
+        <li><b>순서</b>
+          <ul>
+            <li>유실부터 막아 at-least-once를 만들면 중복은 반드시 남음</li>
+          </ul></li>
+        <li><b>중복 없애기</b>
+          <ul>
+            <li>멱등하게 쓰거나, 결과와 위치를 원자적으로 커밋</li>
+          </ul></li>
+        <li><b>짝</b>
+          <ul>
+            <li>outbox(보내는 쪽 유실 방지)와 inbox(받는 쪽 중복 제거)를 함께 쓰면 DB → Kafka → DB가 결과적으로 한 번</li>
+          </ul></li>
+      </ul>
+    </section>

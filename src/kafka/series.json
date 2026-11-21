@@ -1,0 +1,34 @@
+{
+  "title": "Kafka",
+  "description": "Kafka 운영에서 유실과 중복을 막는 방법과 exactly-once",
+  "intro": "복제가 어떻게 동작하는지 보고, 메시지가 어디서 사라지고 어디서 두 번 남는지, 무엇으로 막는지 정리한다.",
+  "home": "복제와 ISR → 유실 · 중복 · exactly-once",
+  "pages": [
+    {
+      "file": "replication.html",
+      "title": "복제와 ISR",
+      "keywords": [
+        "fetch",
+        "LEO",
+        "HW",
+        "ISR",
+        "리더 선출",
+        "ELR",
+        "leader epoch"
+      ]
+    },
+    {
+      "file": "delivery-guarantee.html",
+      "title": "유실 · 중복 · exactly-once",
+      "keywords": [
+        "acks",
+        "멱등 프로듀서",
+        "오프셋 커밋",
+        "inbox",
+        "outbox",
+        "트랜잭션",
+        "펜싱"
+      ]
+    }
+  ]
+}

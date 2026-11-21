@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flink 체크포인트와 장애 복구 · 공부 노트</title>
+<meta name="description" content="배리어, 체크포인트 구조, 정렬, 장애 복구, 세이브포인트">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">공부 노트</a>
+  <a class="crumb" href="index.html">/ Flink</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" type="button">다크 모드</button>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="목차">
+    <div class="toc-title">목차</div>
+    <ol>
+      <li><a href="#c1">1. 체크포인트가 필요한 이유</a></li>
+      <li><a href="#c2">2. 배리어로 찍는 과정</a></li>
+      <li><a href="#c3">3. 안에 든 것</a></li>
+      <li><a href="#c4">4. 배리어 정렬과 지연</a></li>
+      <li><a href="#c5">5. 장애와 복구</a></li>
+      <li><a href="#c6">6. 체크포인트 vs 세이브포인트</a></li>
+      <li><a href="#c7">7. 설정 한눈에</a></li>
+      <li><a href="#c8">8. 한 장 요약</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="doc-head">
+      <h1>Flink 체크포인트와 장애 복구</h1>
+      <p>흐르는 동안 상태와 읽은 위치를 어떻게 같은 시점으로 저장하고, 죽었을 때 어떻게 되살리는지 따라간다.</p>
+    </div>
+
+    <section class="chapter" id="c1">
+      <h2><span class="no">1</span>체크포인트가 필요한 이유</h2>
+      <ul><li>레코드 하나 = 1로 개수를 세는 잡이 7까지 세고 죽었다</li><li>되살릴 때는 <b>어디서부터 다시 읽을지(위치)</b>와 <b>그때까지 센 값(상태)</b>이 필요하다</li></ul>
+      <div class="table-wrap"><table>
+        <tr><th>저장 방식</th><th>저장된 값</th><th>복구 후</th><th>결과</th></tr>
+        <tr><td>제각각 저장</td><td><ul><li>위치 5</li><li>합계 7</li></ul></td><td>6, 7을 다시 읽어 7에 더함</td><td><b>9</b> — 두 번 셈</td></tr>
+        <tr><td>같은 시점으로 저장</td><td><ul><li>위치 5</li><li>합계 5</li></ul></td><td>6, 7을 다시 읽어 5에 더함</td><td><b>7</b> — 정확</td></tr>
+      </table></div>
+      <ul>
+        <li>서브태스크들은 동시에 돌아서, 각자 "지금" 저장하면 서로 다른 순간이 저장된다.</li>
+        <li>체크포인트는 <b>모든 서브태스크의 상태와 소스의 읽은 위치를 같은 경계로</b> 저장하는 장치다.</li>
+      </ul>
+    </section>
+
+    <section class="chapter" id="c2">
+      <h2><span class="no">2</span>배리어로 찍는 과정</h2>
+      <div class="fig"><svg viewBox="-2 38 867 216" style="max-width:867px;margin:0 auto" role="img" aria-label="배리어가 흘러가며 경계를 자른다"><defs><marker id="f5853287-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f5853287-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f5853287-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f5853287-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f5853287-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="100" width="120" height="60" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.6" opacity="1"/><text x="80.0" y="135" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">소스</text><rect x="26" y="170" width="108" height="30" rx="15" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.6" opacity="1"/><text x="80.0" y="190" font-size="12" style="fill:var(--ok)" font-weight="700" text-anchor="middle" opacity="1">위치 5 저장 ✓</text><rect x="166" y="113" width="46" height="34" rx="6" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.4" stroke-dasharray="4 3" opacity="1"/><text x="189.0" y="135" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">r9</text><rect x="218" y="113" width="46" height="34" rx="6" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.4" stroke-dasharray="4 3" opacity="1"/><text x="241.0" y="135" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">r8</text><rect x="270" y="113" width="46" height="34" rx="6" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.4" stroke-dasharray="4 3" opacity="1"/><text x="293.0" y="135" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">r7</text><path d="M142,130 L164,130" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f5853287-sub)"/><path d="M318,130 L342,130" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f5853287-sub)"/><rect x="344" y="100" width="140" height="60" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.6" opacity="1"/><text x="414.0" y="135" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">연산자</text><rect x="350" y="170" width="128" height="30" rx="15" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.6" opacity="1"/><text x="414.0" y="190" font-size="12" style="fill:var(--ok)" font-weight="700" text-anchor="middle" opacity="1">합계 5 저장 ✓</text><rect x="510" y="113" width="46" height="34" rx="6" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.4" stroke-dasharray="4 3" opacity="1"/><text x="533.0" y="135" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">r6</text><rect x="562" y="98" width="9" height="64" rx="2" style="fill:var(--warn);stroke:var(--warn)" stroke-width="1" opacity="1"/><text x="566.5" y="178" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">배리어 N</text><rect x="577" y="113" width="46" height="34" rx="6" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="600.0" y="135" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">r5</text><rect x="629" y="113" width="46" height="34" rx="6" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="652.0" y="135" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">r4</text><path d="M486,130 L508,130" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f5853287-sub)"/><path d="M677,130 L701,130" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f5853287-sub)"/><rect x="703" y="100" width="140" height="60" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.6" opacity="1"/><text x="773.0" y="135" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">싱크</text><rect x="709" y="170" width="128" height="30" rx="15" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.2" opacity="1"/><text x="773.0" y="190" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">배리어 N 기다리는 중</text><path d="M166,90 L166,82 L316,82 L316,90" fill="none" style="stroke:var(--sub)" stroke-width="1.8"/><text x="241.0" y="72" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">다음 체크포인트 몫</text><path d="M510,90 L510,82 L556,82 L556,90" fill="none" style="stroke:var(--sub)" stroke-width="1.8"/><text x="533.0" y="72" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">다음 몫</text><path d="M577,90 L577,82 L675,82 L675,90" fill="none" style="stroke:var(--acc)" stroke-width="1.8"/><text x="626.0" y="72" font-size="12" style="fill:var(--acc)" font-weight="700" text-anchor="middle" opacity="1">체크포인트 N 몫</text><rect x="20" y="212.0" width="9" height="20" rx="2" style="fill:var(--warn);stroke:var(--warn)" stroke-width="1" opacity="1"/><text x="36" y="226.0" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="1">배리어 N</text><rect x="120" y="213.0" width="30" height="18" rx="4" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="158" y="226.0" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="1">배리어 앞 레코드 (N에 반영)</text><rect x="340" y="213.0" width="30" height="18" rx="4" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.2" stroke-dasharray="4 3" opacity="1"/><text x="378" y="226.0" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="1">배리어 뒤 레코드</text><rect x="510" y="213.0" width="30" height="18" rx="9" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.6" opacity="1"/><text x="548" y="226.0" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="1">체크포인트 N에 저장한 상태</text></svg></div>
+      <ul>
+        <li><b>배리어</b>
+          <ul>
+            <li>소스가 데이터 줄 사이에 끼워 넣는 표시</li>
+            <li>레코드와 같은 줄에 서서 흐르고, 레코드를 앞지르지 않는다</li>
+            <li>배리어 N보다 앞(오른쪽)의 레코드는 체크포인트 N에 반영되고, 뒤(왼쪽)는 다음 체크포인트 몫이다</li>
+            <li>그림은 배리어 N이 연산자를 막 지나간 순간 — 소스와 연산자는 저장을 마쳤고, 싱크는 배리어가 오기를 기다린다</li>
+            <li>그래서 각 서브태스크가 "배리어를 만난 순간"의 상태를 저장하면, 모두가 같은 경계로 저장된다</li>
+          </ul></li>
+      </ul>
+      <h3>단계별로 보면</h3>
+      <ol>
+        <li><b>소스</b>
+          <ul>
+            <li>JobManager가 체크포인트 N 시작을 알림</li>
+            <li>읽은 위치(5)를 저장</li>
+            <li>데이터 사이에 <b>배리어 N</b>을 끼워 보내고, 멈추지 않고 계속 읽음</li>
+          </ul></li>
+        <li><b>연산자</b>
+          <ul>
+            <li>배리어 앞의 r5까지 처리해 합계 5</li>
+            <li>배리어를 만난 순간 <b>합계 5</b>를 저장하고 배리어를 넘김</li>
+            <li>처리 위치는 따로 보내지 않음 — 배리어 앞까지만 반영된 상태라 소스의 위치 5와 저절로 짝이 맞음</li>
+          </ul></li>
+        <li><b>싱크</b>
+          <ul>
+            <li>써 두었지만 아직 확정하지 않은 결과 목록을 저장</li>
+          </ul></li>
+        <li><b>완료</b>
+          <ul>
+            <li>보고가 다 모이면 JobManager가 목차(<code>_metadata</code>)를 쓰고 완료 처리</li>
+            <li>완료 알림을 받은 싱크가 결과를 커밋 → 외부에 보임</li>
+            <li>타임아웃 안에 다 안 모이면 N은 버리고 이전 완료본을 그대로 씀</li>
+          </ul></li>
+      </ol>
+      <h3>상태는 어떻게 저장되나</h3>
+      <div class="fig"><svg viewBox="-2 -10 964 301" style="max-width:964px;margin:0 auto" role="img" aria-label="상태 저장 타이밍"><defs><marker id="f1832743-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f1832743-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f1832743-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f1832743-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f1832743-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><text x="20" y="75" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">처리</text><text x="20" y="155" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">업로드</text><line x1="110" y1="70" x2="940" y2="70" style="stroke:var(--line)" stroke-width="2"/><line x1="110" y1="150" x2="940" y2="150" style="stroke:var(--line)" stroke-width="2"/><rect x="110" y="54" width="210" height="32" rx="6" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="215" y="75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">레코드 처리</text><rect x="328" y="54" width="70" height="32" rx="6" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.8" opacity="1"/><text x="363" y="75" font-size="12.5" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">사본</text><rect x="406" y="54" width="534" height="32" rx="6" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="673" y="75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">레코드 처리 계속</text><rect x="324" y="30" width="8" height="80" rx="2" style="fill:var(--warn);stroke:var(--warn)" stroke-width="1" opacity="1"/><text x="328" y="24" font-size="12" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">배리어 N 도착</text><rect x="398" y="134" width="380" height="32" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.6" opacity="1"/><text x="588" y="155" font-size="12.5" style="fill:var(--ok)" font-weight="700" text-anchor="middle" opacity="1">사본을 S3에 업로드</text><path d="M363,88 L363,150 L394,150" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1832743-ok)"/><rect x="800" y="200" width="140" height="50" rx="8" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="870.0" y="230.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">JobManager</text><path d="M778,160 L840,198" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1832743-warn)"/><text x="800" y="180" font-size="12" style="fill:var(--warn)" font-weight="700" text-anchor="end" opacity="1">완료 + 파일 위치</text><circle cx="363" cy="104" r="11" style="fill:var(--warn)"/><text x="363" y="108.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><circle cx="588" cy="180" r="11" style="fill:var(--ok)"/><text x="588" y="184.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><circle cx="870" cy="258" r="11" style="fill:var(--warn)"/><text x="870" y="262.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text><text x="940" y="44" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="end" opacity="1">시간 →</text></svg></div>
+      <ol>
+        <li><b>사본 확보</b> (동기)
+          <ul>
+            <li>배리어를 만난 순간, 그 시점 상태의 사본만 빠르게 떠 둔다</li>
+            <li>이 짧은 순간만 레코드 처리가 멈춘다</li>
+          </ul></li>
+        <li><b>업로드</b> (비동기)
+          <ul>
+            <li>떠 둔 사본을 각 서브태스크가 S3에 <b>직접</b> 올린다</li>
+            <li>그동안 레코드 처리는 계속된다</li>
+          </ul></li>
+        <li><b>보고</b>
+          <ul>
+            <li>업로드가 끝나면 JobManager에 "완료 + 파일 위치"만 보낸다</li>
+            <li>상태 자체는 JobManager를 거치지 않는다 — 상태가 수십 GB여도 JobManager가 병목이 되지 않는다</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <section class="chapter" id="c3">
+      <h2><span class="no">3</span>체크포인트 안에 든 것</h2>
+      <div class="fig"><svg viewBox="-2 -2 704 362" style="max-width:704px;margin:0 auto" role="img" aria-label="체크포인트 안에 든 것"><defs><marker id="f2548324-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f2548324-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f2548324-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f2548324-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f2548324-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="30" width="200" height="60" rx="8" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="120.0" y="56.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">JobManager</text><text x="120.0" y="75.0" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">체크포인트 코디네이터</text><rect x="20" y="130" width="200" height="56" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="120.0" y="163.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">소스 서브태스크</text><rect x="20" y="206" width="200" height="56" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="120.0" y="239.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">연산자 서브태스크</text><rect x="20" y="282" width="200" height="56" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="120.0" y="315.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">싱크 서브태스크</text><rect x="380" y="20" width="300" height="290" rx="12" style="fill:var(--soft);stroke:var(--sub)" stroke-width="1.4" opacity="1"/><text x="398" y="48" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">S3 · chk-N/</text><rect x="398" y="66" width="264" height="42" rx="6" style="fill:var(--panel);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="414" y="92" font-size="12.5" style="fill:var(--ink)" font-weight="600" text-anchor="start" opacity="1">_metadata  (목차)</text><rect x="398" y="124" width="264" height="42" rx="6" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="414" y="150" font-size="12.5" style="fill:var(--ink)" font-weight="600" text-anchor="start" opacity="1">소스 상태 — 읽은 위치</text><rect x="398" y="182" width="264" height="42" rx="6" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="414" y="208" font-size="12.5" style="fill:var(--ink)" font-weight="600" text-anchor="start" opacity="1">연산자 상태 — 키별 값 · 타이머</text><rect x="398" y="240" width="264" height="42" rx="6" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="414" y="266" font-size="12.5" style="fill:var(--ink)" font-weight="600" text-anchor="start" opacity="1">싱크 상태 — 미커밋 결과</text><path d="M222,60 L396,87" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2548324-warn)"/><path d="M222,158 L396,145" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2548324-ok)"/><path d="M222,234 L396,203" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2548324-ok)"/><path d="M222,310 L396,261" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2548324-ok)"/><text x="300" y="52" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">목차 쓰기</text></svg></div>
+      <div class="table-wrap"><table>
+        <tr><th>들어 있는 것</th><th>누가 쓰나</th><th>복구할 때 쓰임</th></tr>
+        <tr><td><code>_metadata</code> (목차)</td><td>JobManager</td><td><ul><li>각 서브태스크 상태 파일이 어디 있는지 찾는 지도</li><li>체크포인트 ID · 종류, 작은 상태는 내용 직접</li><li>키 그룹 범위 — 병렬도를 바꿔 복원할 때 다시 나누는 기준</li></ul></td></tr>
+        <tr><td>읽은 위치</td><td>소스 서브태스크</td><td><ul><li>어디서부터 다시 읽을지</li></ul></td></tr>
+        <tr><td>키별 상태 · 타이머</td><td>연산자 서브태스크</td><td><ul><li>계산을 이어 갈 값 (합계, 조인 대기 데이터 등)</li></ul></td></tr>
+        <tr><td>미커밋 결과 목록</td><td>싱크 서브태스크</td><td><ul><li>커밋이 안 된 결과를 정리하거나 마저 커밋</li></ul></td></tr>
+        <tr><td>버퍼 속 데이터</td><td>각 서브태스크</td><td><ul><li>비정렬 체크포인트일 때만</li><li>배리어가 앞지른 사이에 있던 데이터</li></ul></td></tr>
+      </table></div>
+      <ul>
+        <li><b>들어가지 않는 것</b>
+          <ul>
+            <li>잡 코드 · 설정</li>
+            <li>원본 데이터 (소스에 있음) · 결과 데이터 (싱크에 있음)</li>
+          </ul></li>
+        <li><b>마지막 완료 체크포인트가 어디 있나</b>
+          <ul>
+            <li>목차가 아니라 JobManager가 따로 기억 (HA를 켜면 HA 저장소)</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter" id="c4">
+      <h2><span class="no">4</span>배리어 정렬과 체크포인트가 느려지는 이유</h2>
+      <div class="fig"><svg viewBox="-2 -12 929 280" style="max-width:929px;margin:0 auto" role="img" aria-label="배리어 정렬"><defs><marker id="f834197-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f834197-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f834197-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f834197-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f834197-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="30" width="150" height="56" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="95.0" y="63.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">입력 A</text><rect x="20" y="190" width="150" height="56" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="95.0" y="223.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">입력 B</text><rect x="640" y="100" width="200" height="80" rx="8" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="2" opacity="1"/><text x="740.0" y="136.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">연산자</text><text x="740.0" y="155.0" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">B의 배리어 대기 중</text><line x1="172" y1="58" x2="636" y2="128" style="stroke:var(--line)" stroke-width="8" stroke-linecap="round"/><line x1="172" y1="218" x2="636" y2="152" style="stroke:var(--line)" stroke-width="8" stroke-linecap="round"/><rect x="430" y="30" width="150" height="50" rx="8" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" stroke-dasharray="5 3" opacity="1"/><text x="505" y="22" font-size="11.5" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">대기 (처리 안 함)</text><rect x="530" y="44" width="34" height="22" rx="5" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.2" stroke-dasharray="3 2" opacity="1"/><text x="547" y="59" font-size="11" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">a7</text><rect x="491" y="44" width="34" height="22" rx="5" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.2" stroke-dasharray="3 2" opacity="1"/><text x="508" y="59" font-size="11" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">a8</text><rect x="428" y="185" width="34" height="22" rx="5" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="445" y="200" font-size="11" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">b5</text><rect x="389" y="185" width="34" height="22" rx="5" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="406" y="200" font-size="11" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">b6</text><rect x="374" y="176" width="8" height="40" rx="2" style="fill:var(--warn);stroke:var(--warn)" stroke-width="1" opacity="1"/><text x="378" y="172" font-size="11" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">N</text><text x="372" y="240" font-size="11.5" style="fill:var(--acc)" font-weight="700" text-anchor="middle" opacity="1">아직 처리 중</text><text x="905" y="145" font-size="1" style="fill:var(--ink)" font-weight="400" text-anchor="start" opacity="1"></text></svg></div>
+      <ul>
+        <li>입력이 둘 이상인 연산자는 <b>모든 입력에서 배리어 N이 와야</b> 상태를 저장한다(정렬).
+          <ul>
+            <li>먼저 배리어가 온 쪽(A)의 그 뒤 데이터는 처리하지 않고 대기</li>
+            <li>늦은 쪽(B)은 배리어 앞 데이터를 계속 처리</li>
+            <li>기다리지 않으면 "N 이후" 데이터가 상태에 섞여 복구 때 두 번 반영된다</li>
+          </ul></li>
+      </ul>
+      <div class="table-wrap"><table>
+        <tr><th>느려지는 곳</th><th>원인</th><th>대응</th></tr>
+        <tr><td>배리어 도착까지</td><td><ul><li>버퍼가 막혀 배리어도 갇힘 (<a href='dataflow.html#c3'>백프레셔</a>)</li><li>느린 입력 쪽 배리어를 기다림</li></ul></td><td><ul><li>백프레셔부터 해결</li><li>비정렬 체크포인트 — 배리어가 줄을 앞지르고, 버퍼 속 데이터를 같이 저장</li><li>버퍼 크기 자동 조절 (buffer debloating)</li></ul></td></tr>
+        <tr><td>저장</td><td><ul><li>상태가 커서 업로드가 오래 걸림</li></ul></td><td><ul><li>RocksDB 증분 체크포인트 (<a href='state-backend.html'>상태 백엔드</a>)</li><li>상태 TTL로 크기 줄이기</li></ul></td></tr>
+        <tr><td>완료 후 커밋</td><td><ul><li>싱크의 커밋이 느림</li></ul></td><td><ul><li>싱크 쪽 설정 확인</li></ul></td></tr>
+      </table></div>
+      <p class="figcap">체크포인트 UI에서 연산자별 "배리어 도착까지 걸린 시간"과 "저장에 걸린 시간"을 나눠 보면 어느 쪽인지 바로 보인다.</p>
+    </section>
+
+    <section class="chapter" id="c5">
+      <h2><span class="no">5</span>장애와 복구</h2>
+      <h3>TaskManager가 죽으면</h3>
+      <div class="fig"><svg viewBox="-6 -38 1012 566" style="max-width:1012px;margin:0 auto" role="img" aria-label="장애와 복구"><defs><marker id="f812790-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f812790-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f812790-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f812790-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f812790-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="16" y="-16" width="208" height="226" rx="14" style="fill:var(--soft);stroke:var(--sub)" fill-opacity="0.45" stroke-width="1.2" stroke-dasharray="7 5"/><text x="32" y="8" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">배포 · 관리</text><rect x="236" y="-16" width="528" height="522" rx="14" style="fill:var(--accbg);stroke:var(--sub)" fill-opacity="0.45" stroke-width="1.2" stroke-dasharray="7 5"/><text x="252" y="8" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">Flink 클러스터 — 잡 하나 (application 모드)</text><rect x="776" y="-16" width="208" height="420" rx="14" style="fill:var(--okbg);stroke:var(--sub)" fill-opacity="0.45" stroke-width="1.2" stroke-dasharray="7 5"/><text x="792" y="8" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">외부 시스템</text><rect x="30" y="40" width="180" height="56" rx="8" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.3" opacity="0.35"/><text x="42" y="62" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="0.35">사용자</text><text x="42" y="81" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="start" opacity="0.35">FlinkDeployment 적용</text><rect x="30" y="140" width="180" height="56" rx="8" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.3" opacity="0.35"/><text x="42" y="162" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="0.35">Flink Operator</text><text x="42" y="181" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="start" opacity="0.35">JM 파드 생성 · 재배포 관리</text><rect x="790" y="40" width="180" height="60" rx="8" style="fill:var(--soft);stroke:var(--warn)" stroke-width="2.6" opacity="1"/><text x="802" y="62" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">소스</text><text x="802" y="81" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="start" opacity="1">읽어 오는 곳 · 예: Kafka</text><rect x="790" y="130" width="180" height="80" rx="8" style="fill:var(--soft);stroke:var(--warn)" stroke-width="2.6" opacity="1"/><text x="802" y="152" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">상태 저장소</text><text x="802" y="171" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="start" opacity="1">체크포인트 · HA</text><text x="802" y="188" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="start" opacity="1">예: S3</text><rect x="790" y="240" width="180" height="60" rx="8" style="fill:var(--soft);stroke:var(--warn)" stroke-width="2.6" opacity="1"/><text x="802" y="262" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">쿠버네티스 API</text><text x="802" y="281" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="start" opacity="1">파드 생성 · 종료</text><rect x="790" y="330" width="180" height="60" rx="8" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.3" opacity="0.35"/><text x="802" y="352" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="0.35">싱크</text><text x="802" y="371" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="start" opacity="0.35">결과를 쓰는 곳 · 예: 테이블</text><rect x="250" y="24" width="500" height="170" rx="12" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.6" opacity="1"/><text x="266" y="48" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">JobManager (파드)</text><rect x="266" y="62" width="145" height="116" rx="8" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.3" opacity="0.35"/><text x="338.5" y="86" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="0.35">Dispatcher</text><text x="338.5" y="110" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="middle" opacity="0.35">잡 접수</text><text x="338.5" y="128" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="middle" opacity="0.35">웹 UI · REST</text><rect x="423" y="62" width="150" height="116" rx="8" style="fill:var(--panel);stroke:var(--warn)" stroke-width="2.6" opacity="1"/><text x="498.0" y="86" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">ResourceManager</text><text x="498.0" y="110" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="middle" opacity="1">슬롯 · TM 관리</text><text x="498.0" y="128" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="middle" opacity="1">TM 파드 요청</text><rect x="585" y="62" width="150" height="116" rx="8" style="fill:var(--panel);stroke:var(--warn)" stroke-width="2.6" opacity="1"/><text x="660.0" y="86" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">JobMaster</text><text x="660.0" y="110" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="middle" opacity="1">실행 계획 · 배치</text><text x="660.0" y="128" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="middle" opacity="1">장애 처리</text><text x="660.0" y="146" font-size="12" style="fill:var(--sub)" font-weight="400" text-anchor="middle" opacity="1">체크포인트 지휘</text><rect x="250" y="236" width="240" height="256" rx="12" style="fill:var(--tm);stroke:var(--warn)" stroke-width="2.6" opacity="1"/><text x="264" y="260" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">TaskManager 1 (파드)</text><rect x="262" y="272" width="104" height="210" rx="8" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.1" stroke-dasharray="5 4" opacity="1"/><text x="270" y="290" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="1">슬롯 0</text><rect x="268" y="302" width="92" height="36" rx="6" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="314.0" y="324" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">소스·A·B 0</text><rect x="268" y="360" width="92" height="36" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="314.0" y="382" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">C·싱크 0</text><rect x="374" y="272" width="104" height="210" rx="8" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.1" stroke-dasharray="5 4" opacity="1"/><text x="382" y="290" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="1">슬롯 1</text><rect x="380" y="302" width="92" height="36" rx="6" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="426.0" y="324" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">소스·A·B 1</text><rect x="380" y="360" width="92" height="36" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="426.0" y="382" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">C·싱크 1</text><rect x="510" y="236" width="240" height="256" rx="12" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="2.6" opacity="0.35"/><text x="524" y="260" font-size="14" style="fill:var(--bad)" font-weight="700" text-anchor="start" opacity="0.35">TaskManager 2 (파드)</text><rect x="522" y="272" width="104" height="210" rx="8" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.1" stroke-dasharray="5 4" opacity="0.35"/><text x="530" y="290" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="0.35">슬롯 0</text><rect x="528" y="302" width="92" height="36" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="0.35"/><text x="574.0" y="324" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="0.35">C·싱크 2</text><rect x="634" y="272" width="104" height="210" rx="8" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.1" stroke-dasharray="5 4" opacity="0.35"/><text x="642" y="290" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="0.35">슬롯 1</text><rect x="640" y="302" width="92" height="36" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="0.35"/><text x="686.0" y="324" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="0.35">C·싱크 3</text><path d="M534,280 L726,468 M726,280 L534,468" style="stroke:var(--bad)" stroke-width="4" opacity="0.5"/><path d="M690,236 L690,180" fill="none" style="stroke:var(--bad)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round" marker-end="url(#f812790-bad)"/><circle cx="708" cy="216" r="11" style="fill:var(--bad)"/><text x="708" y="220.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><circle cx="720" cy="166" r="11" style="fill:var(--warn)"/><text x="720" y="170.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><path d="M520,62 L520,52 L778,52 L778,268 L788,268" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f812790-warn)"/><circle cx="650" cy="52" r="11" style="fill:var(--warn)"/><text x="650" y="56.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text><path d="M788,196 L440,266" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f812790-ok)"/><circle cx="600" cy="232" r="11" style="fill:var(--ok)"/><text x="600" y="236.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">4</text><circle cx="956" cy="70" r="11" style="fill:var(--acc)"/><text x="956" y="74.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">5</text></svg></div>
+      <ol>
+        <li>heartbeat가 끊기거나 쿠버네티스가 파드 종료를 알린다.</li>
+        <li>JobMaster가 재시작 전략에 따라 관련 서브태스크(보통 잡 전체)를 취소한다.</li>
+        <li>ResourceManager가 쿠버네티스에 새 TM 파드를 요청한다.</li>
+        <li>마지막 완료 체크포인트의 목차를 읽어, 각 서브태스크가 S3에서 자기 상태를 받아 복원한다.</li>
+        <li>소스는 체크포인트에 저장된 위치부터 다시 읽는다.
+          <ul>
+            <li>상태와 읽은 위치가 같은 체크포인트로 <b>함께</b> 되돌아가므로, 다시 읽은 레코드가 두 번 반영되지 않는다 — Flink 내부의 exactly-once</li>
+            <li>끝단까지 보장하려면 소스는 다시 읽을 수 있어야 하고(예: Kafka), 싱크는 체크포인트 완료 때 커밋해야 한다(2단계 커밋)</li>
+          </ul></li>
+      </ol>
+      <h3>JobManager가 죽으면</h3>
+      <div class="fig"><svg viewBox="-2 -2 844 344" style="max-width:844px;margin:0 auto" role="img" aria-label="JobManager 장애와 복구"><defs><marker id="f3515827-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f3515827-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f3515827-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f3515827-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f3515827-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="130" width="170" height="60" rx="8" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="105.0" y="156.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">쿠버네티스</text><text x="105.0" y="175.0" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">Deployment가 파드 재생성</text><rect x="280" y="20" width="200" height="60" rx="8" style="fill:var(--badbg);stroke:var(--bad)" stroke-width="2" opacity="1"/><text x="380" y="56" font-size="13" style="fill:var(--bad)" font-weight="700" text-anchor="middle" opacity="1">JobManager (죽음)</text><path d="M300,28 L460,72 M460,28 L300,72" style="stroke:var(--bad)" stroke-width="2.4" opacity="0.6"/><rect x="280" y="130" width="200" height="60" rx="8" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.8" opacity="1"/><text x="380.0" y="165.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">새 JobManager</text><rect x="600" y="60" width="220" height="56" rx="8" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="710.0" y="84.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">HA ConfigMap</text><text x="710.0" y="103.0" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">리더 · 최신 체크포인트 위치</text><rect x="600" y="160" width="220" height="56" rx="8" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="710.0" y="184.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">HA 저장소 (S3)</text><text x="710.0" y="203.0" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">잡 정보 · 체크포인트</text><rect x="190" y="270" width="160" height="50" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="270.0" y="300.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">TaskManager 1</text><rect x="410" y="270" width="160" height="50" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="490.0" y="300.0" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">TaskManager 2</text><path d="M380,82 L380,126" fill="none" style="stroke:var(--bad)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round" marker-end="url(#f3515827-bad)"/><path d="M192,160 L276,160" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f3515827-warn)"/><circle cx="234" cy="140" r="11" style="fill:var(--warn)"/><text x="234" y="144.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><path d="M482,148 L596,92" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f3515827-warn)"/><circle cx="540" cy="112" r="11" style="fill:var(--warn)"/><text x="540" y="116.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><path d="M482,172 L596,188" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f3515827-warn)"/><path d="M340,192 L290,266" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f3515827-ok)"/><path d="M420,192 L480,266" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f3515827-ok)"/><circle cx="380" cy="232" r="11" style="fill:var(--ok)"/><text x="380" y="236.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text></svg></div>
+      <ol>
+        <li>쿠버네티스(Deployment)가 새 JM 파드를 띄운다.</li>
+        <li>새 JM이 HA ConfigMap에서 리더 정보와 최신 체크포인트 위치를, HA 저장소(S3)에서 잡 정보를 읽는다.</li>
+        <li>잡을 재구성하고, TM들이 새 JM에 다시 붙어 마지막 체크포인트에서 상태를 복원한다.</li>
+        <li><b>HA가 꺼져 있으면</b>
+          <ul>
+            <li>2번에서 읽을 정보가 없어, 잡이 상태 없이 처음부터 시작한다</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <section class="chapter" id="c6">
+      <h2><span class="no">6</span>체크포인트 vs 세이브포인트</h2>
+      <div class="table-wrap"><table>
+        <tr><th></th><th>체크포인트</th><th>세이브포인트</th></tr>
+        <tr><td>누가 만드나</td><td>Flink가 주기마다 자동</td><td>사람이 명령으로</td></tr>
+        <tr><td>누가 지우나</td><td>Flink (최근 N개만 유지)</td><td>사람</td></tr>
+        <tr><td>쓰는 때</td><td>도는 중 장애 → 자동 복구</td><td><ul><li>코드 배포</li><li>병렬도 변경</li><li>Flink 버전 업그레이드</li><li>클러스터 이전</li></ul></td></tr>
+        <tr><td>형식</td><td><ul><li>빠르게 찍기 위주</li><li>RocksDB면 증분 가능</li></ul></td><td><ul><li>옮겨 쓰기 위주</li><li>기본은 전체·표준 형식</li></ul></td></tr>
+      </table></div>
+      <h3>재배포할 때 시작 지점 — Operator의 <code>upgradeMode</code></h3>
+      <div class="table-wrap"><table>
+        <tr><th>값</th><th>동작</th><th>쓰는 때</th></tr>
+        <tr><td><code>last-state</code></td><td>HA에 기록된 마지막 체크포인트에서 시작</td><td><ul><li>평소 코드 배포</li><li>빠름, 잡 상태가 나빠도 가능</li></ul></td></tr>
+        <tr><td><code>savepoint</code></td><td>내리기 전에 세이브포인트를 찍고 거기서 시작</td><td><ul><li>Flink 버전 업그레이드</li><li>상태 백엔드 변경</li><li>재처리를 최소로 하고 싶을 때</li></ul></td></tr>
+        <tr><td><code>stateless</code></td><td>상태 없이 처음부터</td><td>상태가 필요 없는 잡</td></tr>
+      </table></div>
+      <div class="note"><ul><li>FlinkDeployment를 지우고 새로 만들면 HA 정보도 같이 사라져 <code>last-state</code>가 이어 갈 곳을 못 찾는다</li><li>이때는 세이브포인트로 시작한다</li></ul></div>
+    </section>
+
+    <section class="chapter" id="c7">
+      <h2><span class="no">7</span>설정 한눈에</h2>
+      <p class="lead">값은 예시.</p>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>값</th><th>설명</th></tr>
+        <tr><td><code>execution.checkpointing.interval</code></td><td>60s</td><td>체크포인트 주기</td></tr>
+        <tr><td><code>execution.checkpointing.min-pause</code></td><td>10s</td><td>앞 체크포인트가 끝나고 최소 이만큼 쉬고 다음 시작</td></tr>
+        <tr><td><code>execution.checkpointing.timeout</code></td><td>30min</td><td>이 안에 안 끝나면 그 체크포인트는 실패</td></tr>
+        <tr><td><code>execution.checkpointing.tolerable-failed-checkpoints</code></td><td>5</td><td>연속 실패를 몇 번까지 참고 잡을 유지할지</td></tr>
+        <tr><td><code>execution.checkpointing.incremental</code></td><td>true</td><td>바뀐 상태 파일만 올림 (RocksDB)</td></tr>
+        <tr><td><code>execution.checkpointing.externalized-checkpoint-retention</code></td><td>RETAIN_ON_CANCELLATION</td><td>잡을 취소해도 마지막 체크포인트를 지우지 않음</td></tr>
+        <tr><td><code>high-availability.type</code></td><td>kubernetes</td><td><ul><li>JM 장애 대비</li><li>리더 정보와 최신 체크포인트 위치를 ConfigMap에 기록</li></ul></td></tr>
+        <tr><td><code>high-availability.storageDir</code></td><td>s3://…</td><td>HA 실제 데이터 위치</td></tr>
+        <tr><td><code>upgradeMode</code></td><td>last-state</td><td>재배포 시작 지점</td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c8">
+      <h2><span class="no">8</span>한 장 요약</h2>
+      <ol>
+        <li>체크포인트는 모든 서브태스크의 상태와 소스의 읽은 위치를 같은 경계로 저장한다.</li>
+        <li>경계는 소스가 데이터 사이에 끼워 보내는 배리어가 만든다.
+          <ul>
+            <li>각 서브태스크는 배리어를 만난 순간의 상태를 S3에 올린다</li>
+          </ul></li>
+        <li>입력이 둘이면 배리어를 맞춰 기다리고, 백프레셔나 큰 상태가 체크포인트를 느리게 한다.</li>
+        <li>장애가 나면 상태와 위치를 함께 마지막 체크포인트로 되돌려 다시 읽는다.
+          <ul>
+            <li>계획된 재배포는 세이브포인트나 마지막 체크포인트로 시작한다</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <nav class="pager">
+      <a href="dataflow.html"><small>← 이전</small>데이터 흐름</a>
+      <a href="state-backend.html" style="text-align:right"><small>다음 →</small>상태 백엔드와 캐싱</a>
+    </nav>
+  </main>
+</div>
+<footer class="site-foot">© 2026 dev-donghwan · <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/deed.ko" rel="license noopener" target="_blank">CC BY-NC-ND 4.0</a> · 출처를 밝히면 공유할 수 있고, 상업적 이용과 변경은 허락하지 않습니다.</footer>
+<script src="../assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<!--
+  공통 틀: 주제 목록 페이지 (예: flink/index.html). src/<주제>/series.json 으로 생성.
+  목록 규칙 (STYLE.md): 한 줄에 하나, 순서대로 읽는 목록이라 숫자(.no)를 단다. "N편" · 태그 칩 금지.
+  자리표시자: {{root}} {{topic}} {{intro}} {{description}} {{rows}}
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{topic}} · 공부 노트</title>
+<meta name="description" content="{{description}}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="{{root}}assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{root}}index.html">공부 노트</a>
+  <a class="crumb" href="index.html">/ {{topic}}</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" type="button">다크 모드</button>
+</header>
+<section class="hero">
+  <h1>{{topic}}</h1>
+  <p>{{intro}}</p>
+</section>
+<main class="topics">
+  <div class="cards">
+{{rows}}
+  </div>
+</main>
+<footer class="site-foot">© 2026 dev-donghwan · <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/deed.ko" rel="license noopener" target="_blank">CC BY-NC-ND 4.0</a> · 출처를 밝히면 공유할 수 있고, 상업적 이용과 변경은 허락하지 않습니다.</footer>
+<script src="{{root}}assets/site.js"></script>
+</body>
+</html>

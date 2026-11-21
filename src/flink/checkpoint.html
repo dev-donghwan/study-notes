@@ -1,0 +1,202 @@
+<!--
+title: Flink 체크포인트와 장애 복구
+description: 배리어, 체크포인트 구조, 정렬, 장애 복구, 세이브포인트
+lead: 흐르는 동안 상태와 읽은 위치를 어떻게 같은 시점으로 저장하고, 죽었을 때 어떻게 되살리는지 따라간다.
+-->
+
+    <section class="chapter">
+      <h2>체크포인트가 필요한 이유</h2>
+      <ul><li>레코드 하나 = 1로 개수를 세는 잡이 7까지 세고 죽었다</li><li>되살릴 때는 <b>어디서부터 다시 읽을지(위치)</b>와 <b>그때까지 센 값(상태)</b>이 필요하다</li></ul>
+      <div class="table-wrap"><table>
+        <tr><th>저장 방식</th><th>저장된 값</th><th>복구 후</th><th>결과</th></tr>
+        <tr><td>제각각 저장</td><td><ul><li>위치 5</li><li>합계 7</li></ul></td><td>6, 7을 다시 읽어 7에 더함</td><td><b>9</b> — 두 번 셈</td></tr>
+        <tr><td>같은 시점으로 저장</td><td><ul><li>위치 5</li><li>합계 5</li></ul></td><td>6, 7을 다시 읽어 5에 더함</td><td><b>7</b> — 정확</td></tr>
+      </table></div>
+      <ul>
+        <li>서브태스크들은 동시에 돌아서, 각자 "지금" 저장하면 서로 다른 순간이 저장된다.</li>
+        <li>체크포인트는 <b>모든 서브태스크의 상태와 소스의 읽은 위치를 같은 경계로</b> 저장하는 장치다.</li>
+      </ul>
+    </section>
+
+    <section class="chapter">
+      <h2>배리어로 찍는 과정</h2>
+      <!--fig:barrier-stream-->
+      <ul>
+        <li><b>배리어</b>
+          <ul>
+            <li>소스가 데이터 줄 사이에 끼워 넣는 표시</li>
+            <li>레코드와 같은 줄에 서서 흐르고, 레코드를 앞지르지 않는다</li>
+            <li>배리어 N보다 앞(오른쪽)의 레코드는 체크포인트 N에 반영되고, 뒤(왼쪽)는 다음 체크포인트 몫이다</li>
+            <li>그림은 배리어 N이 연산자를 막 지나간 순간 — 소스와 연산자는 저장을 마쳤고, 싱크는 배리어가 오기를 기다린다</li>
+            <li>그래서 각 서브태스크가 "배리어를 만난 순간"의 상태를 저장하면, 모두가 같은 경계로 저장된다</li>
+          </ul></li>
+      </ul>
+      <h3>단계별로 보면</h3>
+      <ol>
+        <li><b>소스</b>
+          <ul>
+            <li>JobManager가 체크포인트 N 시작을 알림</li>
+            <li>읽은 위치(5)를 저장</li>
+            <li>데이터 사이에 <b>배리어 N</b>을 끼워 보내고, 멈추지 않고 계속 읽음</li>
+          </ul></li>
+        <li><b>연산자</b>
+          <ul>
+            <li>배리어 앞의 r5까지 처리해 합계 5</li>
+            <li>배리어를 만난 순간 <b>합계 5</b>를 저장하고 배리어를 넘김</li>
+            <li>처리 위치는 따로 보내지 않음 — 배리어 앞까지만 반영된 상태라 소스의 위치 5와 저절로 짝이 맞음</li>
+          </ul></li>
+        <li><b>싱크</b>
+          <ul>
+            <li>써 두었지만 아직 확정하지 않은 결과 목록을 저장</li>
+          </ul></li>
+        <li><b>완료</b>
+          <ul>
+            <li>보고가 다 모이면 JobManager가 목차(<code>_metadata</code>)를 쓰고 완료 처리</li>
+            <li>완료 알림을 받은 싱크가 결과를 커밋 → 외부에 보임</li>
+            <li>타임아웃 안에 다 안 모이면 N은 버리고 이전 완료본을 그대로 씀</li>
+          </ul></li>
+      </ol>
+      <h3>상태는 어떻게 저장되나</h3>
+      <!--fig:snapshot-timing-->
+      <ol>
+        <li><b>사본 확보</b> (동기)
+          <ul>
+            <li>배리어를 만난 순간, 그 시점 상태의 사본만 빠르게 떠 둔다</li>
+            <li>이 짧은 순간만 레코드 처리가 멈춘다</li>
+          </ul></li>
+        <li><b>업로드</b> (비동기)
+          <ul>
+            <li>떠 둔 사본을 각 서브태스크가 S3에 <b>직접</b> 올린다</li>
+            <li>그동안 레코드 처리는 계속된다</li>
+          </ul></li>
+        <li><b>보고</b>
+          <ul>
+            <li>업로드가 끝나면 JobManager에 "완료 + 파일 위치"만 보낸다</li>
+            <li>상태 자체는 JobManager를 거치지 않는다 — 상태가 수십 GB여도 JobManager가 병목이 되지 않는다</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="안에 든 것">체크포인트 안에 든 것</h2>
+      <!--fig:contents-->
+      <div class="table-wrap"><table>
+        <tr><th>들어 있는 것</th><th>누가 쓰나</th><th>복구할 때 쓰임</th></tr>
+        <tr><td><code>_metadata</code> (목차)</td><td>JobManager</td><td><ul><li>각 서브태스크 상태 파일이 어디 있는지 찾는 지도</li><li>체크포인트 ID · 종류, 작은 상태는 내용 직접</li><li>키 그룹 범위 — 병렬도를 바꿔 복원할 때 다시 나누는 기준</li></ul></td></tr>
+        <tr><td>읽은 위치</td><td>소스 서브태스크</td><td><ul><li>어디서부터 다시 읽을지</li></ul></td></tr>
+        <tr><td>키별 상태 · 타이머</td><td>연산자 서브태스크</td><td><ul><li>계산을 이어 갈 값 (합계, 조인 대기 데이터 등)</li></ul></td></tr>
+        <tr><td>미커밋 결과 목록</td><td>싱크 서브태스크</td><td><ul><li>커밋이 안 된 결과를 정리하거나 마저 커밋</li></ul></td></tr>
+        <tr><td>버퍼 속 데이터</td><td>각 서브태스크</td><td><ul><li>비정렬 체크포인트일 때만</li><li>배리어가 앞지른 사이에 있던 데이터</li></ul></td></tr>
+      </table></div>
+      <ul>
+        <li><b>들어가지 않는 것</b>
+          <ul>
+            <li>잡 코드 · 설정</li>
+            <li>원본 데이터 (소스에 있음) · 결과 데이터 (싱크에 있음)</li>
+          </ul></li>
+        <li><b>마지막 완료 체크포인트가 어디 있나</b>
+          <ul>
+            <li>목차가 아니라 JobManager가 따로 기억 (HA를 켜면 HA 저장소)</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="배리어 정렬과 지연">배리어 정렬과 체크포인트가 느려지는 이유</h2>
+      <!--fig:alignment-->
+      <ul>
+        <li>입력이 둘 이상인 연산자는 <b>모든 입력에서 배리어 N이 와야</b> 상태를 저장한다(정렬).
+          <ul>
+            <li>먼저 배리어가 온 쪽(A)의 그 뒤 데이터는 처리하지 않고 대기</li>
+            <li>늦은 쪽(B)은 배리어 앞 데이터를 계속 처리</li>
+            <li>기다리지 않으면 "N 이후" 데이터가 상태에 섞여 복구 때 두 번 반영된다</li>
+          </ul></li>
+      </ul>
+      <div class="table-wrap"><table>
+        <tr><th>느려지는 곳</th><th>원인</th><th>대응</th></tr>
+        <tr><td>배리어 도착까지</td><td><ul><li>버퍼가 막혀 배리어도 갇힘 (<a href='dataflow.html#c3'>백프레셔</a>)</li><li>느린 입력 쪽 배리어를 기다림</li></ul></td><td><ul><li>백프레셔부터 해결</li><li>비정렬 체크포인트 — 배리어가 줄을 앞지르고, 버퍼 속 데이터를 같이 저장</li><li>버퍼 크기 자동 조절 (buffer debloating)</li></ul></td></tr>
+        <tr><td>저장</td><td><ul><li>상태가 커서 업로드가 오래 걸림</li></ul></td><td><ul><li>RocksDB 증분 체크포인트 (<a href='state-backend.html'>상태 백엔드</a>)</li><li>상태 TTL로 크기 줄이기</li></ul></td></tr>
+        <tr><td>완료 후 커밋</td><td><ul><li>싱크의 커밋이 느림</li></ul></td><td><ul><li>싱크 쪽 설정 확인</li></ul></td></tr>
+      </table></div>
+      <p class="figcap">체크포인트 UI에서 연산자별 "배리어 도착까지 걸린 시간"과 "저장에 걸린 시간"을 나눠 보면 어느 쪽인지 바로 보인다.</p>
+    </section>
+
+    <section class="chapter">
+      <h2>장애와 복구</h2>
+      <h3>TaskManager가 죽으면</h3>
+      <!--fig:failure-->
+      <ol>
+        <li>heartbeat가 끊기거나 쿠버네티스가 파드 종료를 알린다.</li>
+        <li>JobMaster가 재시작 전략에 따라 관련 서브태스크(보통 잡 전체)를 취소한다.</li>
+        <li>ResourceManager가 쿠버네티스에 새 TM 파드를 요청한다.</li>
+        <li>마지막 완료 체크포인트의 목차를 읽어, 각 서브태스크가 S3에서 자기 상태를 받아 복원한다.</li>
+        <li>소스는 체크포인트에 저장된 위치부터 다시 읽는다.
+          <ul>
+            <li>상태와 읽은 위치가 같은 체크포인트로 <b>함께</b> 되돌아가므로, 다시 읽은 레코드가 두 번 반영되지 않는다 — Flink 내부의 exactly-once</li>
+            <li>끝단까지 보장하려면 소스는 다시 읽을 수 있어야 하고(예: Kafka), 싱크는 체크포인트 완료 때 커밋해야 한다(2단계 커밋)</li>
+          </ul></li>
+      </ol>
+      <h3>JobManager가 죽으면</h3>
+      <!--fig:jm-failure-->
+      <ol>
+        <li>쿠버네티스(Deployment)가 새 JM 파드를 띄운다.</li>
+        <li>새 JM이 HA ConfigMap에서 리더 정보와 최신 체크포인트 위치를, HA 저장소(S3)에서 잡 정보를 읽는다.</li>
+        <li>잡을 재구성하고, TM들이 새 JM에 다시 붙어 마지막 체크포인트에서 상태를 복원한다.</li>
+        <li><b>HA가 꺼져 있으면</b>
+          <ul>
+            <li>2번에서 읽을 정보가 없어, 잡이 상태 없이 처음부터 시작한다</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <section class="chapter">
+      <h2>체크포인트 vs 세이브포인트</h2>
+      <div class="table-wrap"><table>
+        <tr><th></th><th>체크포인트</th><th>세이브포인트</th></tr>
+        <tr><td>누가 만드나</td><td>Flink가 주기마다 자동</td><td>사람이 명령으로</td></tr>
+        <tr><td>누가 지우나</td><td>Flink (최근 N개만 유지)</td><td>사람</td></tr>
+        <tr><td>쓰는 때</td><td>도는 중 장애 → 자동 복구</td><td><ul><li>코드 배포</li><li>병렬도 변경</li><li>Flink 버전 업그레이드</li><li>클러스터 이전</li></ul></td></tr>
+        <tr><td>형식</td><td><ul><li>빠르게 찍기 위주</li><li>RocksDB면 증분 가능</li></ul></td><td><ul><li>옮겨 쓰기 위주</li><li>기본은 전체·표준 형식</li></ul></td></tr>
+      </table></div>
+      <h3>재배포할 때 시작 지점 — Operator의 <code>upgradeMode</code></h3>
+      <div class="table-wrap"><table>
+        <tr><th>값</th><th>동작</th><th>쓰는 때</th></tr>
+        <tr><td><code>last-state</code></td><td>HA에 기록된 마지막 체크포인트에서 시작</td><td><ul><li>평소 코드 배포</li><li>빠름, 잡 상태가 나빠도 가능</li></ul></td></tr>
+        <tr><td><code>savepoint</code></td><td>내리기 전에 세이브포인트를 찍고 거기서 시작</td><td><ul><li>Flink 버전 업그레이드</li><li>상태 백엔드 변경</li><li>재처리를 최소로 하고 싶을 때</li></ul></td></tr>
+        <tr><td><code>stateless</code></td><td>상태 없이 처음부터</td><td>상태가 필요 없는 잡</td></tr>
+      </table></div>
+      <div class="note"><ul><li>FlinkDeployment를 지우고 새로 만들면 HA 정보도 같이 사라져 <code>last-state</code>가 이어 갈 곳을 못 찾는다</li><li>이때는 세이브포인트로 시작한다</li></ul></div>
+    </section>
+
+    <section class="chapter">
+      <h2>설정 한눈에</h2>
+      <p class="lead">값은 예시.</p>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>값</th><th>설명</th></tr>
+        <tr><td><code>execution.checkpointing.interval</code></td><td>60s</td><td>체크포인트 주기</td></tr>
+        <tr><td><code>execution.checkpointing.min-pause</code></td><td>10s</td><td>앞 체크포인트가 끝나고 최소 이만큼 쉬고 다음 시작</td></tr>
+        <tr><td><code>execution.checkpointing.timeout</code></td><td>30min</td><td>이 안에 안 끝나면 그 체크포인트는 실패</td></tr>
+        <tr><td><code>execution.checkpointing.tolerable-failed-checkpoints</code></td><td>5</td><td>연속 실패를 몇 번까지 참고 잡을 유지할지</td></tr>
+        <tr><td><code>execution.checkpointing.incremental</code></td><td>true</td><td>바뀐 상태 파일만 올림 (RocksDB)</td></tr>
+        <tr><td><code>execution.checkpointing.externalized-checkpoint-retention</code></td><td>RETAIN_ON_CANCELLATION</td><td>잡을 취소해도 마지막 체크포인트를 지우지 않음</td></tr>
+        <tr><td><code>high-availability.type</code></td><td>kubernetes</td><td><ul><li>JM 장애 대비</li><li>리더 정보와 최신 체크포인트 위치를 ConfigMap에 기록</li></ul></td></tr>
+        <tr><td><code>high-availability.storageDir</code></td><td>s3://…</td><td>HA 실제 데이터 위치</td></tr>
+        <tr><td><code>upgradeMode</code></td><td>last-state</td><td>재배포 시작 지점</td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter">
+      <h2>한 장 요약</h2>
+      <ol>
+        <li>체크포인트는 모든 서브태스크의 상태와 소스의 읽은 위치를 같은 경계로 저장한다.</li>
+        <li>경계는 소스가 데이터 사이에 끼워 보내는 배리어가 만든다.
+          <ul>
+            <li>각 서브태스크는 배리어를 만난 순간의 상태를 S3에 올린다</li>
+          </ul></li>
+        <li>입력이 둘이면 배리어를 맞춰 기다리고, 백프레셔나 큰 상태가 체크포인트를 느리게 한다.</li>
+        <li>장애가 나면 상태와 위치를 함께 마지막 체크포인트로 되돌려 다시 읽는다.
+          <ul>
+            <li>계획된 재배포는 세이브포인트나 마지막 체크포인트로 시작한다</li>
+          </ul></li>
+      </ol>
+    </section>

@@ -1,0 +1,17 @@
+{
+  "title": "샘플",
+  "description": "문서 템플릿을 채운 예시",
+  "intro": "templates/page.html 의 형식을 실제로 채운 예시. 새 문서를 쓸 때 이 모양을 따른다.",
+  "hidden": true,
+  "pages": [
+    {
+      "file": "sample.html",
+      "title": "새 문서가 사이트에 오르기까지",
+      "keywords": [
+        "공통 틀",
+        "규칙 검사",
+        "series.json"
+      ]
+    }
+  ]
+}

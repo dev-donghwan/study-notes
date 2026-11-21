@@ -1,0 +1,218 @@
+<!--
+title: Kafka 복제와 ISR
+description: 팔로워가 리더를 따라가는 방법, ISR과 HW, 리더 선출과 leader epoch
+lead: 한 파티션의 복제본들이 어떻게 같은 로그를 갖게 되고, 리더가 바뀌어도 커밋된 레코드가 남는지 따라간다.
+-->
+    <section class="chapter">
+      <h2 data-toc="fetch와 HW">복제 흐름: fetch와 HW</h2>
+      <p class="lead">팔로워가 리더에게 가져가는(fetch) 방식이고, HW는 그 fetch 요청과 응답을 타고 퍼진다.</p>
+      <!--fig:kafka-repl-fetch-->
+      <ol>
+        <li><b>리더에 4 씀</b>
+          <ul>
+            <li>리더 LEO가 5가 됨. HW는 아직 4</li>
+            <li>컨슈머는 HW 앞(3까지)만 읽음</li>
+          </ul></li>
+        <li><b>팔로워 fetch (4부터)</b>
+          <ul>
+            <li>팔로워가 "4부터 줘"라고 요청 = 자기 LEO가 4라는 뜻</li>
+            <li>4를 받아 LEO 5. 응답에 실린 리더 HW 4를 자기 HW로 씀</li>
+          </ul></li>
+        <li><b>다음 fetch (5부터)</b>
+          <ul>
+            <li>리더는 이 요청으로 팔로워 LEO가 5임을 앎</li>
+            <li>ISR 전원의 LEO 중 가장 작은 값 = 5 → 리더 HW 5</li>
+            <li>이때 4를 <code>acks=all</code>로 보낸 프로듀서에게 성공 응답이 나감</li>
+          </ul></li>
+        <li><b>팔로워 HW 갱신</b>
+          <ul>
+            <li>그 fetch의 응답에 실린 HW 5로 팔로워 HW도 5가 됨</li>
+            <li>팔로워 HW는 리더보다 fetch 한 번만큼 늦음</li>
+          </ul></li>
+      </ol>
+      <div class="table-wrap"><table>
+        <tr><th>용어</th><th>뜻</th></tr>
+        <tr><td>LEO (log end offset)</td><td><ul><li>그 복제본 로그에 다음으로 쓸 오프셋</li></ul></td></tr>
+        <tr><td>HW (high watermark)</td><td><ul><li>ISR 전원이 가진 위치. ISR 중 가장 작은 LEO</li><li>HW 앞의 레코드 = 커밋된 레코드. 컨슈머는 여기까지만 읽음</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter">
+      <h2>ISR</h2>
+      <p class="lead">HW를 계산할 때 기다려 주는 복제본의 목록. 너무 느린 팔로워는 빼서 쓰기가 멈추지 않게 한다.</p>
+      <!--fig:kafka-isr-->
+      <ol>
+        <li><b>ISR (in-sync replicas)</b>
+          <ul>
+            <li>리더와, 리더를 충분히 따라잡은 팔로워의 집합</li>
+            <li>HW는 ISR 안의 LEO만 보고 정함</li>
+          </ul></li>
+        <li><b>HW</b>
+          <ul>
+            <li>리더 LEO 6, 팔로워 A LEO 5 → HW 5</li>
+            <li>리더에만 있는 5는 아직 커밋 전이라 컨슈머에게 안 보임</li>
+          </ul></li>
+        <li><b>ISR 밖 팔로워</b>
+          <ul>
+            <li>팔로워 B는 많이 뒤처져 ISR에서 빠짐</li>
+            <li>HW 계산에서 빠지므로 B 때문에 HW가 멈추지 않음</li>
+            <li>리더 후보도 아님</li>
+          </ul></li>
+      </ol>
+
+      <h3>들고 나는 조건</h3>
+      <div class="table-wrap"><table>
+        <tr><th>변화</th><th>조건</th><th>누가 정하나</th></tr>
+        <tr><td>ISR에서 빠짐</td><td><ul><li><code>replica.lag.time.max.ms</code>(기본 30초) 동안 리더 LEO까지 따라오지 못함</li><li>팔로워가 죽거나 fetch를 멈춘 경우도 같음</li></ul></td><td><ul><li>리더가 판단해 컨트롤러에 변경 요청</li></ul></td></tr>
+        <tr><td>ISR로 돌아옴</td><td><ul><li>팔로워 LEO가 리더 HW를 따라잡음</li></ul></td><td><ul><li>리더가 판단해 컨트롤러에 변경 요청</li></ul></td></tr>
+      </table></div>
+      <ul class="figcap"><li>뒤처진 정도를 레코드 개수가 아니라 시간으로 잰다. 순간적으로 몰리는 쓰기에 ISR이 흔들리지 않게 하려는 것</li></ul>
+    </section>
+
+    <section class="chapter">
+      <h2>리더 선출</h2>
+      <p class="lead">리더가 죽으면 KRaft 컨트롤러가 ISR 안에서 새 리더를 고른다. ISR에는 커밋된 레코드가 다 있으므로 유실이 없다.</p>
+      <h3>고르는 순서</h3>
+      <ol>
+        <li><b>ISR 안에서</b>
+          <ul>
+            <li>복제본 목록 순서대로 보며, 살아 있고 ISR에 있는 첫 복제본</li>
+          </ul></li>
+        <li><b>ISR이 비었으면 ELR에서</b>
+          <ul>
+            <li>ELR(eligible leader replicas): ISR에서 빠졌지만 커밋된 레코드를 다 가진 것이 보장된 복제본</li>
+            <li>아래 "ELR" 참고</li>
+          </ul></li>
+        <li><b>그래도 없으면 멈춤</b>
+          <ul>
+            <li>리더 없이 파티션이 멈춤 (읽기 · 쓰기 불가)</li>
+            <li><code>unclean.leader.election.enable=true</code>일 때만 ISR 밖 복제본을 리더로 뽑음 → 그 복제본에 없던 레코드는 유실</li>
+          </ul></li>
+      </ol>
+      <ul class="figcap"><li>순서는 Kafka 4.4.0 <code>PartitionChangeBuilder</code>의 선출 코드 기준</li></ul>
+
+      <h3>ISR 크기별로 보면 (복제 계수 3 · <code>min.insync.replicas=2</code> 예시)</h3>
+      <div class="table-wrap"><table>
+        <tr><th>ISR 크기</th><th><code>acks=all</code> 쓰기</th><th>리더가 죽으면</th></tr>
+        <tr><td>3</td><td><ul><li>성공</li></ul></td><td><ul><li>남은 ISR 중 하나가 리더</li></ul></td></tr>
+        <tr><td>2</td><td><ul><li>성공</li></ul></td><td><ul><li>남은 ISR 하나가 리더</li></ul></td></tr>
+        <tr><td>1 (리더만)</td><td><ul><li>거절 (<code>NotEnoughReplicas</code>)</li><li>프로듀서는 재시도하다 시간이 다 되면 실패</li></ul></td><td><ul><li>ISR이 비어 ELR에서 고름</li><li>ELR도 없으면 파티션이 멈춤</li></ul></td></tr>
+      </table></div>
+
+      <h3>ELR (KIP-966)</h3>
+      <ul>
+        <li><b>생긴 이유</b>
+          <ul>
+            <li>ISR이 <code>min.insync.replicas</code> 아래로 줄면 쓰기가 거절되어 HW가 더 늘지 않음</li>
+            <li>그 시점에 ISR에서 빠진 복제본은 커밋된 레코드를 다 갖고 있음</li>
+            <li>이런 복제본을 ELR로 기록해, ISR이 비어도 unclean 선출 없이 리더로 씀</li>
+          </ul></li>
+        <li><b>켜지는 조건</b>
+          <ul>
+            <li>4.4.0의 기본 기능 버전은 <code>eligible.leader.replicas.version=1</code></li>
+            <li>메타데이터 버전 4.1 이상으로 새로 만든 클러스터에서 켜짐</li>
+            <li>업그레이드한 클러스터는 기능 버전을 직접 올려야 함 (<code>kafka-features.sh</code>)</li>
+          </ul></li>
+      </ul>
+
+      <h3>선호 리더</h3>
+      <ul>
+        <li><b>복제본 목록의 첫 번째 = 선호 리더</b>
+          <ul>
+            <li>장애 후 리더가 한 브로커로 몰리면, 선호 리더가 돌아왔을 때 리더를 되돌림</li>
+            <li><code>auto.leader.rebalance.enable</code> 기본 true, <code>leader.imbalance.check.interval.seconds</code> 기본 300초마다 확인</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="leader epoch">리더가 바뀐 뒤: leader epoch</h2>
+      <p class="lead">리더가 바뀌면 복제본마다 로그 끝이 달라질 수 있다. leader epoch로 어디까지가 맞는 로그인지 정해 맞춘다.</p>
+      <!--fig:kafka-epoch-->
+      <ol>
+        <li><b>A가 리더 (epoch 1)</b>
+          <ul>
+            <li>리더가 바뀔 때마다 epoch가 1씩 오름. 레코드 배치마다 쓴 시점의 epoch가 붙음</li>
+            <li>A는 3까지 썼고 B는 2까지 받음. 3은 아직 커밋 전</li>
+          </ul></li>
+        <li><b>A 장애 → B가 리더 (epoch 2)</b>
+          <ul>
+            <li>B가 새 리더가 되어 epoch 2로 새 레코드를 3에 씀</li>
+            <li>A의 3과 B의 3은 내용이 다름</li>
+          </ul></li>
+        <li><b>A 복귀 → 3 잘라냄</b>
+          <ul>
+            <li>A가 팔로워로 돌아와 리더에게 "epoch 1은 어디서 끝났나"를 물음</li>
+            <li>리더 답: 3 (epoch 2가 3부터 시작) → A는 3부터 잘라냄</li>
+          </ul></li>
+        <li><b>B에서 3을 받아 옴</b>
+          <ul>
+            <li>잘라낸 자리부터 다시 fetch → 두 로그가 같아짐</li>
+          </ul></li>
+      </ol>
+      <ul>
+        <li><b>잘린 A의 3은 유실인가</b>
+          <ul>
+            <li>커밋 전 레코드라 <code>acks=all</code> 프로듀서는 성공 응답을 받지 못함 → 재시도로 다시 보냄</li>
+            <li><code>acks=1</code>이면 성공 응답을 이미 받았으므로 그대로 유실</li>
+          </ul></li>
+        <li><b>epoch 이전 방식의 문제</b>
+          <ul>
+            <li>예전에는 팔로워가 재시작하면 자기 HW까지 잘라냄</li>
+            <li>팔로워 HW는 fetch 한 번만큼 늦어 커밋된 레코드까지 잘라 유실 · 로그 불일치가 생길 수 있었음 (KIP-101로 고침)</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter">
+      <h2>운영에서 볼 것</h2>
+      <h3>지표</h3>
+      <div class="table-wrap"><table>
+        <tr><th>지표</th><th>뜻</th><th>0이 아니면</th></tr>
+        <tr><td><code>UnderReplicatedPartitions</code></td><td><ul><li>ISR이 복제 계수보다 작은 파티션 수</li></ul></td><td><ul><li>팔로워가 느리거나 죽음</li></ul></td></tr>
+        <tr><td><code>UnderMinIsrPartitionCount</code></td><td><ul><li>ISR이 <code>min.insync.replicas</code>보다 작은 파티션 수</li></ul></td><td><ul><li><code>acks=all</code> 쓰기가 거절되는 중</li></ul></td></tr>
+        <tr><td><code>OfflinePartitionsCount</code></td><td><ul><li>리더가 없는 파티션 수</li></ul></td><td><ul><li>읽기 · 쓰기 모두 멈춤</li></ul></td></tr>
+        <tr><td><code>IsrShrinksPerSec</code> · <code>IsrExpandsPerSec</code></td><td><ul><li>ISR이 줄고 느는 횟수</li></ul></td><td><ul><li>자주 반복되면 팔로워 쪽 디스크 · 네트워크가 느린 것</li></ul></td></tr>
+      </table></div>
+
+      <h3>설정</h3>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>기본값</th><th>설명</th></tr>
+        <tr><td><code>default.replication.factor</code></td><td>1</td><td><ul><li>토픽을 만들 때 복제 계수. 운영은 보통 3</li></ul></td></tr>
+        <tr><td><code>min.insync.replicas</code></td><td>1</td><td><ul><li><code>acks=all</code> 쓰기에 필요한 최소 ISR 크기. 복제 계수 3이면 보통 2</li></ul></td></tr>
+        <tr><td><code>replica.lag.time.max.ms</code></td><td>30초</td><td><ul><li>이 시간 동안 못 따라오면 ISR에서 빠짐</li></ul></td></tr>
+        <tr><td><code>unclean.leader.election.enable</code></td><td>false</td><td><ul><li>ISR · ELR이 모두 없을 때 ISR 밖 복제본을 리더로 쓸지</li></ul></td></tr>
+        <tr><td><code>auto.leader.rebalance.enable</code></td><td>true</td><td><ul><li>선호 리더로 리더를 되돌릴지</li></ul></td></tr>
+      </table></div>
+      <ul class="figcap"><li>기본값은 Kafka 4.4.0 소스 태그의 설정 정의 기준</li></ul>
+    </section>
+
+    <section class="chapter">
+      <h2>한 장 요약</h2>
+      <ul>
+        <li><b>복제</b>
+          <ul>
+            <li>팔로워가 리더에게 fetch로 가져감</li>
+            <li>HW는 ISR 중 가장 작은 LEO. 그 앞이 커밋된 레코드이고 컨슈머는 거기까지만 읽음</li>
+          </ul></li>
+        <li><b>ISR</b>
+          <ul>
+            <li>HW 계산에서 기다려 주는 복제본</li>
+            <li><code>replica.lag.time.max.ms</code> 동안 못 따라오면 빠지고, 따라잡으면 돌아옴</li>
+          </ul></li>
+        <li><b>리더 선출</b>
+          <ul>
+            <li>ISR → (ISR이 비면) ELR → 없으면 멈춤</li>
+            <li>unclean을 켜야만 ISR 밖에서 뽑고, 그만큼 유실</li>
+          </ul></li>
+        <li><b>leader epoch</b>
+          <ul>
+            <li>리더가 바뀐 뒤 각 복제본이 "그 epoch가 어디서 끝났나"를 물어 어긋난 꼬리를 잘라내고 맞춤</li>
+          </ul></li>
+        <li><b>유실과의 관계</b>
+          <ul>
+            <li><code>acks=all</code>은 HW가 넘어야 응답 → 응답한 레코드는 ISR 전원에 있음</li>
+            <li>그래서 ISR에서 뽑힌 새 리더에도 있음. 설정 정리는 <a href="delivery-guarantee.html">유실 · 중복 · exactly-once</a></li>
+          </ul></li>
+      </ul>
+    </section>

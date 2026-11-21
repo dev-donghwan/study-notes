@@ -1,0 +1,284 @@
+<!--
+title: Flink 잡이 뜨는 과정
+description: Flink Kubernetes Operator 기준으로 잡 제출부터 서브태스크 배치까지 정리
+lead: Flink Kubernetes Operator와 application 모드를 기준으로, 잡을 제출해서 서브태스크가 TaskManager에 배치되기까지를 순서대로 따라간다.
+-->
+
+    <section class="chapter">
+      <h2>전체 지도</h2>
+      <!--fig:overview-->
+      <div class="table-wrap"><table class="grouped">
+        <tr><th>영역</th><th>구성 요소</th><th>하는 일</th></tr>
+        <tr><td class="zone">배포 · 관리</td><td>Flink Operator</td><td><ul><li>FlinkDeployment를 보고 JM 파드 생성</li><li>재배포 · 업그레이드 관리</li></ul></td></tr>
+        <tr><td class="zone" rowspan="5">Flink 클러스터</td><td>JobManager (JM)</td><td><ul><li>잡 하나를 지휘</li><li>데이터는 처리하지 않음</li><li>아래 세 구성 요소를 담은 파드</li></ul></td></tr>
+        <tr><td class="child">Dispatcher</td><td><ul><li>잡 접수</li><li>웹 UI · REST</li></ul></td></tr>
+        <tr><td class="child">ResourceManager</td><td><ul><li>슬롯과 TM 관리</li><li>쿠버네티스에 TM 파드 요청</li></ul></td></tr>
+        <tr><td class="child">JobMaster</td><td><ul><li>실행 계획</li><li>서브태스크 배치</li><li>장애 처리</li><li>체크포인트 지휘</li></ul></td></tr>
+        <tr><td>TaskManager (TM)</td><td><ul><li>서브태스크를 슬롯에 담아 실행하는 워커</li><li>파드 하나</li></ul></td></tr>
+        <tr><td class="zone" rowspan="4">외부 시스템</td><td>소스</td><td><ul><li>Flink가 데이터를 읽어 오는 곳</li><li>예: Kafka, DB 변경 로그(CDC), 파일</li></ul></td></tr>
+        <tr><td>싱크</td><td><ul><li>Flink가 결과를 쓰는 곳</li><li>예: 레이크하우스 테이블, Kafka, DB</li></ul></td></tr>
+        <tr><td>상태 저장소</td><td><ul><li>체크포인트(상태 사본)와 HA 정보를 두는 곳</li><li>예: S3, HDFS</li></ul></td></tr>
+        <tr><td>쿠버네티스 API</td><td><ul><li>JM · TM 파드를 만들고 지우는 창구</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter">
+      <h2>제출</h2>
+      <!--fig:submit-->
+      <ol>
+        <li><b>FlinkDeployment 적용</b>
+          <ul>
+            <li>사용자가 잡 정의를 쿠버네티스에 적용</li>
+            <li>담는 것: 잡 jar · 병렬도 · 자원 · 설정</li>
+          </ul></li>
+        <li><b>JM 리소스 생성</b>
+          <ul>
+            <li>Operator가 쿠버네티스에 아래 리소스를 만듦</li>
+          </ul>
+          <div class="table-wrap"><table>
+            <tr><th>리소스</th><th>용도</th></tr>
+            <tr><td>Deployment → JM 파드</td><td><ul><li>JobManager 프로세스 실행</li></ul></td></tr>
+            <tr><td>Service <code>&lt;이름&gt;-rest</code></td><td><ul><li>웹 UI · REST API (8081)</li><li>사용자 접속</li><li>Operator가 잡 상태 조회 · 세이브포인트 지시</li></ul></td></tr>
+            <tr><td>Service <code>&lt;이름&gt;</code></td><td><ul><li>JM 내부 통신 (RPC 6123, blob 6124)</li><li>파드 IP가 바뀌어도 TM이 JM을 찾는 고정 주소</li></ul></td></tr>
+            <tr><td>ConfigMap</td><td><ul><li><code>flink-conf</code>와 로그 설정</li><li>JM · TM이 같은 설정으로 뜨게 함</li></ul></td></tr>
+          </table></div>
+        </li>
+        <li><b>JM 시작</b>
+          <ul>
+            <li>JM 파드가 뜨면 잡을 받아 실행 준비를 함 (<a href="#c3">JM 파드가 뜨면서 하는 일</a>)</li>
+          </ul></li>
+        <li><b>HA 기록 (HA를 켠 경우)</b>
+          <ul>
+            <li>Operator가 아니라 JM이 HA용 ConfigMap을 직접 만듦</li>
+            <li>ConfigMap에는 위치만 기록
+              <ul>
+                <li>지금 리더인 JM</li>
+                <li>잡 그래프 · 완료된 체크포인트가 있는 위치</li>
+              </ul></li>
+            <li>실제 데이터는 S3 같은 저장소에 둠 (<code>high-availability.storageDir</code>)</li>
+            <li>JM이 죽으면 새 JM이 이 ConfigMap을 읽고 이어 감 (<a href="checkpoint.html#c5">장애와 복구</a>)</li>
+          </ul></li>
+      </ol>
+      <div class="note"><ul><li>TM은 Operator가 만드는 게 아니라 JM 안에서 ResourceManager가 직접 생성한다</li></ul></div>
+    </section>
+
+    <section class="chapter">
+      <h2>JM 파드가 뜨면서 하는 일</h2>
+      <!--fig:jm-sequence-->
+      <ol>
+        <li><b>JM 파드 시작</b>
+          <ul>
+            <li>Dispatcher와 ResourceManager가 뜬다</li>
+            <li>이 시점에 TM은 0개다</li>
+          </ul></li>
+        <li><b>Dispatcher</b>가 사용자 <code>main()</code>을 실행해 <a href="#c4">잡 그래프</a>를 얻는다.</li>
+        <li><b>Dispatcher</b>가 이 잡을 맡을 <b>JobMaster</b>를 만들고 잡 그래프를 넘긴다.</li>
+        <li><b>JobMaster</b>가 잡 그래프를 <a href="#c5">병렬도만큼 펼쳐</a> "슬롯 4개 필요"를 계산하고, ResourceManager에 슬롯을 요청한다.</li>
+        <li><b>ResourceManager</b>는 빈 슬롯이 없으니 쿠버네티스에 <a href="#c6">TM 파드 2개를 요청</a>한다.</li>
+        <li><b>TM</b>이 떠서 ResourceManager에 등록하고, 자기 슬롯 수를 보고한다.</li>
+        <li><b>ResourceManager</b>가 이 슬롯을 요청한 JobMaster를 알려 주면, <b>TM</b>이 JobMaster에 슬롯을 직접 제공한다.</li>
+        <li><b>JobMaster</b>가 받은 슬롯에 <a href="#c7">서브태스크를 배포</a>하고, TM이 스레드로 실행한다.</li>
+      </ol>
+      <div class="table-wrap"><table>
+        <tr><th>구성 요소</th><th>한 줄 역할</th><th>하는 일</th></tr>
+        <tr><td>Dispatcher</td><td>접수 창구</td><td><ul><li>잡 접수 (application 모드에서는 <code>main()</code> 실행)</li><li>잡을 맡을 JobMaster 생성 (session 모드는 잡마다 하나씩)</li><li>웹 UI · REST 제공</li><li>끝난 잡 기록 보관</li></ul></td></tr>
+        <tr><td>JobMaster</td><td>잡 하나의 감독</td><td><ul><li>실행 그래프 생성</li><li>슬롯 요청 · 수령</li><li>서브태스크 배포와 상태 추적</li><li>실패 시 재시작</li><li>체크포인트 지휘</li><li>잡(잡 그래프) 하나당 하나 — 서브태스크마다가 아님</li></ul></td></tr>
+        <tr><td>ResourceManager</td><td>자원 장부 관리자</td><td><ul><li>TM 등록 · heartbeat</li><li>빈 슬롯 장부 관리</li><li>슬롯 요청에 빈 슬롯 배정</li><li>모자라면 TM 파드 요청</li><li>오래 노는 TM 반납</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="코드 → 잡 그래프">코드가 잡 그래프가 되기까지</h2>
+      <!--fig:jobgraph-->
+      <ol>
+        <li><b>사용자 코드</b>
+          <ul>
+            <li>DataStream · SQL 코드는 연산자들의 연결</li>
+            <li>소스, 변환, 집계, 싱크가 각각 연산자</li>
+          </ul></li>
+        <li><b>잡 그래프 만들기</b>
+          <ul>
+            <li>application 모드에서는 JM 안에서 Dispatcher가 사용자 <code>main()</code>을 실행해 <b>잡 그래프(JobGraph)</b>를 만듦</li>
+          </ul></li>
+        <li><b>체이닝 결정</b>
+          <ul>
+            <li>묶임 — 바로 이어지고(forward) 병렬도가 같은 연산자는 한 태스크로, 한 스레드에서 돎</li>
+            <li>forward — 0번 → 0번, 1번 → 1번으로 그대로 이어져 묶을 수 있음 (오른쪽 그림)</li>
+            <li>keyBy — 키마다 갈 서브태스크가 달라 엇갈려 보내야 하므로 끊김</li>
+            <li>그 밖에 끊기는 경우
+              <ul>
+                <li>rebalance · broadcast 같은 재분배</li>
+                <li>병렬도가 다름</li>
+                <li>입력이 둘인 연산자 (조인 등)</li>
+                <li>직접 끊음 (<code>disableChaining()</code> 등)</li>
+              </ul></li>
+          </ul></li>
+        <li><b>결과</b>
+          <ul>
+            <li>태스크 2개</li>
+            <li>실행할 때는 태스크마다 병렬도만큼 복제됨 (<a href="#c5">실행 계획</a>)</li>
+            <li>잡 그래프는 JobMaster에 넘어감</li>
+          </ul></li>
+      </ol>
+      <div class="table-wrap"><table>
+        <tr><th>체이닝</th><th>장점</th><th>단점</th></tr>
+        <tr><td>묶음</td><td><ul><li>직렬화 · 버퍼 없이 함수 호출로 전달</li><li>지연 작음</li></ul></td><td><ul><li>한 스레드라 코어 하나를 나눠 씀</li><li>누가 느린지 지표로 안 보임</li></ul></td></tr>
+        <tr><td>끊음</td><td><ul><li>연산자별 병렬도</li><li>연산자별 지표</li></ul></td><td><ul><li>직렬화 · 버퍼 비용</li></ul></td></tr>
+      </table></div>
+      <h3>체이닝 직접 조절하기</h3>
+      <div class="table-wrap"><table>
+        <tr><th>방법</th><th>범위</th><th>효과</th></tr>
+        <tr><td><code>pipeline.operator-chaining.enabled: false</code></td><td>잡 전체</td><td>체이닝을 끔</td></tr>
+        <tr><td><code>.disableChaining()</code></td><td>연산자 하나</td><td>앞뒤와 모두 끊음</td></tr>
+        <tr><td><code>.startNewChain()</code></td><td>연산자 하나</td><td>여기서부터 새 체인</td></tr>
+        <tr><td><code>.slotSharingGroup("이름")</code></td><td>연산자 묶음</td><td>그룹이 달라 끊김</td></tr>
+      </table></div>
+      <ul class="figcap"><li>SQL 잡은 연산자 단위 지정이 없고 잡 전체 설정만 쓴다</li><li>보통 무거운 연산자만 병렬도를 달리하거나, 병목을 지표로 나눠 볼 때 끊는다</li></ul>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="실행 계획">실행 계획: 서브태스크로 펼치기</h2>
+      <!--fig:execgraph-->
+      <ul>
+        <li><b>실행 그래프</b>
+          <ul>
+            <li>JobMaster가 잡 그래프를 병렬도만큼 펼쳐 <b>실행 그래프(ExecutionGraph)</b>를 만듦</li>
+          </ul></li>
+        <li><b>서브태스크</b>
+          <ul>
+            <li>실행 단위</li>
+            <li>태스크 하나가 병렬도만큼 서브태스크로 복제됨</li>
+          </ul></li>
+        <li><b>키 그룹</b>
+          <ul>
+            <li>keyBy 뒤 연산자는 키 그룹을 범위로 나눠 서브태스크마다 맡김</li>
+            <li>키 그룹 = <code>해시(키) % max-parallelism</code> (예: 128)</li>
+            <li>같은 키는 항상 같은 키 그룹 → 같은 서브태스크로 감</li>
+            <li>병렬도를 바꾸면 키 그룹 범위만 다시 나눔</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="자원 확보">자원 확보: 슬롯과 TM</h2>
+      <div class="note"><b>왜 TM이 잡 그래프 다음에 뜨나</b>
+        <ul>
+          <li><b>application 모드</b>
+          <ul>
+            <li>TM 0개로 시작.
+          <ul>
+            <li>필요한 슬롯 수가 나와야 TM 개수를 정할 수 있음</li>
+          </ul></li>
+          </ul></li>
+          <li><b>session 모드 · standalone</b>
+          <ul>
+            <li>TM을 미리 띄워 두고, 잡이 오면 빈 슬롯에 배치</li>
+          </ul></li>
+        </ul></div>
+      <!--fig:resources-->
+      <div class="formula">필요한 슬롯 = 가장 큰 병렬도 &nbsp;→&nbsp; TM 수 = 필요한 슬롯 ÷ TM당 슬롯 (올림)</div>
+      <ol>
+        <li><b>JobMaster → ResourceManager: 슬롯 4개 요청</b>
+          <ul>
+            <li>슬롯 하나에 태스크별 서브태스크가 하나씩 같이 들어간다 (slot sharing)</li>
+            <li>그래서 서브태스크 총수(6)가 아니라 <b>가장 큰 병렬도(4)</b>만큼 필요</li>
+          </ul></li>
+        <li><b>ResourceManager → 쿠버네티스: TM 파드 2개 요청</b>
+          <ul>
+            <li>빈 슬롯이 없으니 TM을 새로 띄운다</li>
+            <li>TM당 슬롯 = <code>taskmanager.numberOfTaskSlots</code> (여기선 2) → ⌈4 ÷ 2⌉ = 2개</li>
+          </ul></li>
+        <li><b>쿠버네티스: TM 파드 생성</b></li>
+        <li><b>TM → ResourceManager: 슬롯 2개씩 등록</b>
+          <ul>
+            <li>빈 슬롯 4개가 준비됨 → 다음 장에서 JobMaster가 서브태스크를 배치</li>
+          </ul></li>
+      </ol>
+      <h3>TM 안을 확대하면: TM ⊃ 슬롯 ⊃ 서브태스크</h3>
+      <!--fig:relation-->
+      <ul>
+        <li><b>TM</b>은 파드 하나, JVM 프로세스 하나다.
+          <ul>
+            <li>그 안을 <code>numberOfTaskSlots</code>개의 슬롯으로 나눈다</li>
+          </ul></li>
+        <li><b>슬롯</b>은 서브태스크를 담는 자리다.
+          <ul>
+            <li>슬롯 하나에 태스크마다 서브태스크가 하나씩 들어가서, 슬롯 하나가 소스부터 싱크까지 파이프라인 한 줄을 맡는 모양이 된다</li>
+          </ul></li>
+        <li><b>서브태스크</b>는 스레드 하나로 돌고, 상태가 있으면 자기 상태 백엔드를 따로 갖는다.
+          <ul>
+            <li>다른 서브태스크와 상태를 공유하지 않는다</li>
+          </ul></li>
+        <li>슬롯이 나누는 건 관리 메모리뿐이다.
+          <ul>
+            <li>JVM 힙과 CPU는 같은 TM의 슬롯끼리 같이 쓴다(격리 없음)</li>
+          </ul></li>
+      </ul>
+    </section>
+
+    <section class="chapter">
+      <h2 data-toc="배치">배치: 서브태스크를 슬롯에</h2>
+      <!--fig:deploy-->
+      <ol>
+        <li><b>배포</b>
+          <ul>
+            <li>JobMaster가 받은 슬롯에 서브태스크를 배포</li>
+          </ul></li>
+        <li><b>스레드</b>
+          <ul>
+            <li>TM이 서브태스크마다 스레드를 띄워 실행</li>
+          </ul></li>
+        <li><b>상태 백엔드</b>
+          <ul>
+            <li>상태가 있는 연산자의 서브태스크마다 하나씩 만듦</li>
+            <li>체크포인트로 시작하면 여기서 상태를 복원</li>
+          </ul></li>
+        <li><b>연결</b>
+          <ul>
+            <li>서브태스크끼리 데이터를 주고받을 버퍼와 연결을 만듦</li>
+            <li>같은 TM이면 메모리로, 다른 TM이면 네트워크로 (그림의 점선)</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <section class="chapter">
+      <h2>설정 한눈에</h2>
+      <p class="lead">값은 예시.</p>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>값</th><th>설명</th></tr>
+        <tr><td><code>parallelism</code></td><td>8</td><td>연산자를 몇 개로 복제해 돌릴지 (서브태스크 수)</td></tr>
+        <tr><td><code>taskmanager.numberOfTaskSlots</code></td><td>2</td><td>TM 하나의 슬롯 수 → 병렬도 8이면 TM 4개</td></tr>
+        <tr><td><code>taskManager.resource</code></td><td>CPU 4 · 16GB</td><td>TM 파드 하나의 자원 (슬롯들이 나눠 씀)</td></tr>
+        <tr><td><code>jobManager.resource</code></td><td>CPU 1 · 2.5GB</td><td>JM 파드의 자원</td></tr>
+        <tr><td><code>pipeline.max-parallelism</code></td><td>128</td><td><ul><li>키 그룹 수 = 병렬도 상한</li><li>상태가 생긴 뒤엔 못 바꿈</li></ul></td></tr>
+        <tr><td><code>state.backend.type</code></td><td>rocksdb</td><td>서브태스크 상태를 둘 곳</td></tr>
+      </table></div>
+      <p class="figcap">체크포인트 · HA · upgradeMode 설정은 다음 문서에서 다룬다.</p>
+    </section>
+
+    <section class="chapter">
+      <h2>한 장 요약</h2>
+      <!--fig:summary-->
+      <ol>
+        <li><b>제출</b>
+          <ul>
+            <li>FlinkDeployment 적용 → Operator가 JM 파드를 띄움</li>
+            <li>JM 안에서 <code>main()</code>이 돌아 잡 그래프가 되고 체이닝이 정해짐</li>
+          </ul></li>
+        <li><b>실행 계획</b>
+          <ul>
+            <li>JobMaster가 잡 그래프를 병렬도만큼 서브태스크로 펼침</li>
+          </ul></li>
+        <li><b>자원 확보</b>
+          <ul>
+            <li>필요한 슬롯 = 가장 큰 병렬도</li>
+            <li>ResourceManager가 그만큼 TM 파드를 띄움</li>
+          </ul></li>
+        <li><b>배치</b>
+          <ul>
+            <li>서브태스크가 슬롯에 배치되어 TM의 스레드로 실행</li>
+            <li>상태는 서브태스크마다 자기 상태 백엔드에 둠</li>
+          </ul></li>
+      </ol>
+      <div class="note">배치된 뒤 데이터가 흐르는 과정은 다음 문서 <a href="dataflow.html">데이터 흐름</a>에서 이어진다.</div>
+    </section>

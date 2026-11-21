@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>상태 백엔드와 캐싱 · 공부 노트</title>
+<meta name="description" content="Flink 상태가 어디에 어떻게 저장되고 읽히는지 — HashMap, RocksDB, LSM, 블록 캐시, 증분 체크포인트">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="../index.html">공부 노트</a>
+  <a class="crumb" href="index.html">/ Flink</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" type="button">다크 모드</button>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="목차">
+    <div class="toc-title">목차</div>
+    <ol>
+      <li><a href="#c1">1. 상태 백엔드란</a></li>
+      <li><a href="#c2">2. 종류: HashMap · RocksDB</a></li>
+      <li><a href="#c3">3. 서브태스크마다 따로</a></li>
+      <li><a href="#c4">4. RocksDB 쓰기: LSM 트리</a></li>
+      <li><a href="#c5">5. 읽기 경로와 캐싱</a></li>
+      <li><a href="#c6">6. 컴팩션은 언제</a></li>
+      <li><a href="#c7">7. 메모리</a></li>
+      <li><a href="#c8">8. 체크포인트와의 연결</a></li>
+      <li><a href="#c9">9. 설정 한눈에</a></li>
+      <li><a href="#c10">10. 한 장 요약</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <div class="doc-head">
+      <h1>상태 백엔드와 캐싱</h1>
+      <p>Flink 연산자가 들고 있는 상태가 어디에 어떻게 저장되고, 어떻게 읽히며, 체크포인트로 어떻게 넘어가는지 따라간다.</p>
+    </div>
+
+    <section class="chapter" id="c1">
+      <h2><span class="no">1</span>상태 백엔드란</h2>
+      <div class="fig"><svg viewBox="-2 -2 994 374" style="max-width:994px;margin:0 auto" role="img" aria-label="상태 백엔드 큰 그림"><defs><marker id="f2275885-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f2275885-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f2275885-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f2275885-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f2275885-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><text x="20" y="44" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">들어오는 레코드</text><rect x="20" y="58" width="96" height="30" rx="6" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.6" opacity="1"/><text x="68" y="78" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상품 A</text><rect x="20" y="98" width="96" height="30" rx="6" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="68" y="118" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상품 B</text><rect x="20" y="138" width="96" height="30" rx="6" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.2" opacity="1"/><text x="68" y="158" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상품 A</text><path d="M118,73 L186,88" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2275885-warn)"/><rect x="170" y="20" width="600" height="330" rx="14" style="fill:var(--tm);stroke:var(--sub)" stroke-width="1.4" opacity="1"/><text x="186" y="42" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">서브태스크 (TaskManager 안)</text><rect x="190" y="56" width="560" height="76" rx="10" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.6" opacity="1"/><text x="206" y="78" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">연산자 · 사용자 코드</text><text x="206" y="102" font-size="13" style="fill:var(--ink);font-family:ui-monospace,Menlo,monospace" font-weight="600">c = count.value()</text><text x="206" y="122" font-size="13" style="fill:var(--ink);font-family:ui-monospace,Menlo,monospace" font-weight="600">count.update(c + 1)</text><rect x="190" y="170" width="560" height="164" rx="10" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.8" opacity="1"/><text x="206" y="194" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">상태 백엔드</text><rect x="330" y="178" width="170" height="26" rx="13" style="fill:var(--panel);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="415" y="196" font-size="12" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">현재 키 = 상품 A</text><rect x="206" y="216" width="300" height="28" rx="6" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.6" opacity="1"/><text x="220" y="235" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">상품 A</text><text x="492" y="235" font-size="12.5" style="fill:var(--ok)" font-weight="700" text-anchor="end" opacity="1">2 → 3</text><rect x="206" y="250" width="300" height="28" rx="6" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.1" opacity="1"/><text x="220" y="269" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">상품 B</text><text x="492" y="269" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="end" opacity="1">5</text><rect x="206" y="284" width="300" height="28" rx="6" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.1" opacity="1"/><text x="220" y="303" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">상품 C</text><text x="492" y="303" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="end" opacity="1">1</text><text x="640" y="196" font-size="12" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">실제로 두는 곳</text><rect x="540" y="208" width="200" height="40" rx="8" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.3" opacity="1"/><text x="640" y="233" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">HashMap · JVM 힙</text><text x="640" y="268" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">또는</text><rect x="540" y="280" width="200" height="40" rx="8" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.3" opacity="1"/><text x="640" y="305" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">RocksDB · 로컬 디스크</text><line x1="508" y1="264" x2="536" y2="264" style="stroke:var(--sub)" stroke-width="1.4" stroke-dasharray="4 3"/><path d="M300,134 L300,214" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2275885-warn)"/><circle cx="300" cy="156" r="11" style="fill:var(--warn)"/><text x="300" y="160.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><path d="M440,214 L440,134" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2275885-ok)"/><circle cx="440" cy="156" r="11" style="fill:var(--ok)"/><text x="440" y="160.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><rect x="830" y="170" width="140" height="164" rx="10" style="fill:var(--soft);stroke:var(--sub)" stroke-width="1.4" opacity="1"/><text x="900" y="244" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">S3</text><text x="900" y="264" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">체크포인트 저장소</text><text x="900" y="282" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">(두 백엔드 공통)</text><path d="M752,210 L826,210" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2275885-ok)"/><circle cx="789" cy="194" r="11" style="fill:var(--ok)"/><text x="789" y="198.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text><path d="M826,296 L752,296" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2275885-acc)"/><circle cx="789" cy="312" r="11" style="fill:var(--acc)"/><text x="789" y="316.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">4</text></svg></div>
+      <ul>
+        <li><b>상태</b>
+          <ul>
+            <li>연산자가 다음 레코드를 처리하려고 들고 있는 값</li>
+            <li>형태는 값 하나(<code>ValueState</code>), 목록(<code>ListState</code>), 맵(<code>MapState</code>) 등</li>
+          </ul></li>
+        <li><b>상태 백엔드</b>
+          <ul>
+            <li>그 상태를 어디에 두고 어떻게 읽고 쓸지 맡는 저장소</li>
+            <li>TaskManager 안에, <b>서브태스크마다 자기 영역이 따로</b> 있다
+              <ul>
+                <li>keyBy로 같은 키는 항상 같은 서브태스크로 간다</li>
+                <li>각 서브태스크는 자기 키 그룹의 상태만 가진다 (<a href="#c3">서브태스크마다 따로</a>)</li>
+              </ul></li>
+            <li>사용자 코드는 <code>value()</code>로 꺼내고 <code>update()</code>로 넣기만 한다</li>
+            <li>꺼낼 때 키를 넘기지 않는다 — Flink가 레코드의 키(상품 A)를 <b>현재 키</b>로 먼저 정해 두고, 백엔드는 그 키의 칸을 돌려준다</li>
+            <li>그래서 <code>count</code>는 변수 하나처럼 보여도, 현재 키에 따라 다른 칸을 가리키는 <b>키별 저장소의 창구</b>다</li>
+          </ul></li>
+      </ul>
+      <h3>레코드가 오면 백엔드에 무엇을 묻나</h3>
+      <div class="table-wrap"><table>
+        <tr><th>상황</th><th>① 꺼내는 것</th><th>② 넣는 것</th></tr>
+        <tr><td>분당 클릭 수 집계</td><td><ul><li>이 상품 · 이 윈도우의 지금까지 합계</li></ul></td><td><ul><li>합계 + 1</li></ul></td></tr>
+        <tr><td>클릭 × 주문 조인</td><td><ul><li>같은 키로 기다리던 상대 레코드</li></ul></td><td><ul><li>짝이 없으면 이 레코드를 대기에 추가</li><li>짝을 찾으면 대기에서 지움</li></ul></td></tr>
+        <tr><td>로그 ID 중복 제거</td><td><ul><li>이 ID를 본 적이 있나</li></ul></td><td><ul><li>처음이면 ID를 기록</li></ul></td></tr>
+        <tr><td>30분 무활동 세션 종료</td><td><ul><li>이 사용자의 세션 값</li></ul></td><td><ul><li>세션 값 갱신</li><li>30분 뒤 타이머 다시 예약</li></ul></td></tr>
+      </table></div>
+      <ul class="figcap"><li>map · filter처럼 레코드 하나만 보고 끝나는 연산은 백엔드에 묻지 않는다</li><li>그림의 ③ ④는 <a href="#c8">체크포인트와의 연결</a>에서 다룬다</li></ul>
+    </section>
+
+    <section class="chapter" id="c2">
+      <h2><span class="no">2</span>종류: HashMap과 RocksDB</h2>
+      <p class="lead">대표적인 상태 백엔드는 두 가지 — 처리 중 상태를 JVM 힙에 두는 HashMap, 로컬 디스크에 두는 RocksDB.</p>
+      <div class="table-wrap"><table>
+        <tr><th></th><th>HashMap</th><th>RocksDB</th></tr>
+        <tr><td>상태 위치</td><td><ul><li>JVM 힙</li><li>자바 객체 그대로</li></ul></td><td><ul><li>TM 로컬 디스크 + 네이티브 메모리</li><li>바이트로 직렬화</li></ul></td></tr>
+        <tr><td>읽기 · 쓰기</td><td><ul><li>해시맵 조회 한 번 → 빠름</li></ul></td><td><ul><li>매번 직렬화 · 역직렬화</li><li>메모리에 없으면 디스크</li></ul></td></tr>
+        <tr><td>크기 한계</td><td><ul><li>힙</li></ul></td><td><ul><li>디스크</li></ul></td></tr>
+        <tr><td>메모리 위험</td><td><ul><li>힙 OOM</li><li>GC 지연</li></ul></td><td><ul><li>네이티브 메모리 초과 → 컨테이너 OOMKilled</li></ul></td></tr>
+        <tr><td>체크포인트</td><td><ul><li>매번 전체</li></ul></td><td><ul><li>증분 가능 (새 파일만)</li></ul></td></tr>
+        <tr><td>관리 메모리</td><td><ul><li>안 씀</li></ul></td><td><ul><li>씀 (memtable · 블록 캐시)</li></ul></td></tr>
+      </table></div>
+      <h3>언제 무엇을 고르나</h3>
+      <div class="table-wrap"><table>
+        <tr><th>상황</th><th>고를 것</th><th>같이 챙길 것</th></tr>
+        <tr><td><ul><li>상태가 힙에 넉넉히 들어감</li><li>지연이 중요</li></ul></td><td>HashMap</td><td><ul><li>관리 메모리를 안 쓰니 <code>taskmanager.memory.managed.fraction</code>을 낮춰 힙으로 돌림</li></ul></td></tr>
+        <tr><td><ul><li>상태가 GB 단위</li><li>긴 윈도우 · 조인 · 대기 버퍼처럼 계속 쌓임</li></ul></td><td>RocksDB</td><td><ul><li>증분 체크포인트 켜기</li><li>상태 TTL로 크기 관리</li></ul></td></tr>
+      </table></div>
+      <div class="note"><b>RocksDB로 바꿀 때 주의 — 받은 값은 사본</b>
+        <ul>
+          <li><code>value()</code>로 받은 객체를 고치고 <code>update()</code>를 안 부르면 저장되지 않는다</li>
+          <li>HashMap에서는 같은 객체라 우연히 동작하던 코드가, RocksDB로 바꾸면 깨지는 흔한 이유</li>
+        </ul></div>
+    </section>
+
+    <section class="chapter" id="c3">
+      <h2><span class="no">3</span>서브태스크마다 따로인 상태 백엔드</h2>
+      <div class="fig"><svg viewBox="-2 -2 824 344" style="max-width:824px;margin:0 auto" role="img" aria-label="서브태스크마다 따로인 상태 백엔드"><defs><marker id="f6686625-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f6686625-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f6686625-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f6686625-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f6686625-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="20" width="780" height="300" rx="14" style="fill:var(--tm);stroke:var(--sub)" stroke-width="1.6" opacity="1"/><text x="38" y="46" font-size="14" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">TaskManager (파드 하나 · JVM 하나)</text><rect x="40" y="62" width="360" height="196" rx="10" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.2" stroke-dasharray="6 4" opacity="1"/><text x="54" y="84" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">슬롯 0</text><rect x="56" y="98" width="328" height="46" rx="8" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.6" opacity="1"/><text x="220" y="126" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">연산자 서브태스크 0</text><path d="M220,146 L220,170" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f6686625-ok)"/><rect x="56" y="172" width="328" height="70" rx="8" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.8" opacity="1"/><text x="220" y="200" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상태 백엔드 #0</text><text x="220" y="222" font-size="12" style="fill:var(--acc)" font-weight="700" text-anchor="middle" opacity="1">키 그룹 0 ~ 63</text><rect x="420" y="62" width="360" height="196" rx="10" style="fill:var(--panel);stroke:var(--sub)" stroke-width="1.2" stroke-dasharray="6 4" opacity="1"/><text x="434" y="84" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">슬롯 1</text><rect x="436" y="98" width="328" height="46" rx="8" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.6" opacity="1"/><text x="600" y="126" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">연산자 서브태스크 1</text><path d="M600,146 L600,170" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f6686625-ok)"/><rect x="436" y="172" width="328" height="70" rx="8" style="fill:var(--accbg);stroke:var(--acc)" stroke-width="1.8" opacity="1"/><text x="600" y="200" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">상태 백엔드 #1</text><text x="600" y="222" font-size="12" style="fill:var(--acc)" font-weight="700" text-anchor="middle" opacity="1">키 그룹 64 ~ 127</text><line x1="400" y1="200" x2="420" y2="200" style="stroke:var(--bad)" stroke-width="2.4"/><text x="410" y="192" font-size="13" style="fill:var(--bad)" font-weight="700" text-anchor="middle" opacity="1">✕</text><rect x="40" y="270" width="740" height="36" rx="8" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.2" opacity="1"/><text x="410" y="293" font-size="12.5" style="fill:var(--warn)" font-weight="700" text-anchor="middle" opacity="1">공유 자원: JVM 힙 · 관리 메모리 · 로컬 디스크</text></svg></div>
+      <div class="table-wrap"><table>
+        <tr><th>항목</th><th>내용</th></tr>
+        <tr><td>있는 곳</td><td><ul><li>TM 프로세스 안</li><li><b>상태가 있는 서브태스크마다 하나씩</b> 따로 뜸</li></ul></td></tr>
+        <tr><td>담는 것</td><td><ul><li>자기 서브태스크가 맡은 <b>키 그룹의 상태만</b></li><li>다른 서브태스크와 공유하지 않음</li></ul></td></tr>
+        <tr><td>공유가 필요 없는 이유</td><td><ul><li>keyBy로 같은 키는 항상 같은 서브태스크로 옴</li><li>락이 필요 없고, 병렬도를 늘리면 그대로 확장됨</li><li>체크포인트도 서브태스크마다 자기 상태만 올리면 됨</li></ul></td></tr>
+        <tr><td>같이 쓰는 것</td><td><ul><li>JVM 힙 · 관리 메모리 · 로컬 디스크 같은 <b>자원만</b></li></ul></td></tr>
+        <tr><td>모두가 같은 데이터를 봐야 하면</td><td><ul><li>broadcast 상태</li><li>이것도 공유가 아니라 서브태스크마다 같은 사본을 둠</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c4">
+      <h2><span class="no">4</span>RocksDB 쓰기: LSM 트리</h2>
+      <div class="fig"><svg viewBox="-2 36 788 468" style="max-width:788px;margin:0 auto" role="img" aria-label="RocksDB 쓰기 경로"><defs><marker id="f2046946-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f2046946-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f2046946-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f2046946-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f2046946-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="120" width="120" height="44" rx="7" style="fill:var(--panel);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="80.0" y="147.13" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">update()</text><rect x="176" y="58" width="398" height="142" rx="14" style="fill:var(--accbg);stroke:var(--sub)" fill-opacity="0.45" stroke-width="1.2" stroke-dasharray="7 5"/><text x="192" y="82" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">메모리 (네이티브)</text><rect x="190" y="98" width="170" height="88" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.6" opacity="1"/><text x="275" y="126" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">memtable</text><text x="275" y="150" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">B=6  A=5</text><text x="275" y="170" font-size="11" style="fill:var(--sub)" font-weight="400" text-anchor="middle" opacity="1">(키 순 정렬)</text><rect x="390" y="98" width="170" height="88" rx="8" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" stroke-dasharray="5 4" opacity="1"/><text x="475" y="126" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">읽기 전용 memtable</text><text x="475" y="152" font-size="12" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">가득 찬 것</text><rect x="176" y="240" width="588" height="242" rx="14" style="fill:var(--okbg);stroke:var(--sub)" fill-opacity="0.45" stroke-width="1.2" stroke-dasharray="7 5"/><text x="192" y="264" font-size="12.5" style="fill:var(--sub)" font-weight="700" text-anchor="start" opacity="1">TM 로컬 디스크</text><rect x="190" y="280" width="50" height="44" rx="7" style="fill:var(--soft);stroke:var(--sub)" stroke-width="1.4" opacity="1"/><text x="215.0" y="306.94" font-size="13" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">L0</text><rect x="190" y="352" width="50" height="44" rx="7" style="fill:var(--soft);stroke:var(--sub)" stroke-width="1.4" opacity="1"/><text x="215.0" y="378.94" font-size="13" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">L1</text><rect x="190" y="424" width="50" height="44" rx="7" style="fill:var(--soft);stroke:var(--sub)" stroke-width="1.4" opacity="1"/><text x="215.0" y="450.94" font-size="13" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">L2</text><rect x="252" y="280" width="100" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="302.0" y="306.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · a ~ z</text><rect x="364" y="280" width="100" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="414.0" y="306.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · c ~ x</text><rect x="476" y="280" width="100" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="526.0" y="306.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · b ~ y</text><rect x="252" y="352" width="156" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="330.0" y="378.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · a ~ h</text><rect x="418" y="352" width="156" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="496.0" y="378.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · i ~ p</text><rect x="584" y="352" width="156" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="662.0" y="378.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · q ~ z</text><rect x="252" y="424" width="116" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="310.0" y="450.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · a ~ e</text><rect x="376" y="424" width="116" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="434.0" y="450.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · f ~ k</text><rect x="500" y="424" width="116" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="558.0" y="450.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · l ~ r</text><rect x="624" y="424" width="116" height="44" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="682.0" y="450.56" font-size="12" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST · s ~ z</text><path d="M142,142 L188,142" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2046946-warn)"/><circle cx="165" cy="120" r="11" style="fill:var(--warn)"/><text x="165" y="124.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><path d="M362,142 L388,142" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2046946-acc)"/><circle cx="375" cy="120" r="11" style="fill:var(--acc)"/><text x="375" y="124.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><path d="M475,188 L475,222 L414,222 L414,276" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2046946-ok)"/><circle cx="444" cy="222" r="11" style="fill:var(--ok)"/><text x="444" y="226.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text><path d="M700,326 L700,350" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2046946-sub)"/><circle cx="724" cy="338" r="11" style="fill:var(--sub)"/><text x="724" y="342.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">4</text><path d="M700,398 L700,422" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2046946-sub)"/></svg></div>
+      <ol>
+        <li><code>update()</code>는 메모리의 <b>memtable</b>에만 넣고 끝난다.
+          <ul>
+            <li>디스크를 건드리지 않아 빠르다</li>
+          </ul></li>
+        <li>memtable이 정해진 크기에 차면 <b>읽기 전용</b>으로 돌리고, 새 memtable로 쓰기를 계속 받는다.</li>
+        <li>읽기 전용 memtable을 정렬된 그대로 디스크에 <b>SST 파일</b>로 내려쓴다(flush).
+          <ul>
+            <li>이 파일들이 L0다</li>
+            <li>SST는 한 번 쓰면 고치지 않는다</li>
+          </ul></li>
+        <li>파일이 쌓이면 백그라운드 <b>컴팩션</b>이 파일을 합치며 아래 레벨(L1, L2 …)로 내린다.
+          <ul>
+            <li>같은 키의 옛 값과 지운 값은 이때 버려진다</li>
+          </ul></li>
+      </ol>
+      <h3>알아 둘 성질</h3>
+      <div class="table-wrap"><table>
+        <tr><th>성질</th><th>내용</th></tr>
+        <tr><td>같은 키를 다시 쓰면</td><td><ul><li>옛 값은 그대로 두고, 새 파일에 새 값을 쓴다</li><li><b>위쪽(최근) 파일의 값이 진짜</b></li></ul></td></tr>
+        <tr><td>레벨별 키 범위</td><td><ul><li>L0 — 파일끼리 키 범위가 겹친다</li><li>L1부터 — 같은 레벨 안에서는 겹치지 않는다 (그림의 a ~ h, i ~ p …)</li></ul></td></tr>
+        <tr><td>장애 대비 로그 (WAL)</td><td><ul><li>Flink는 RocksDB의 WAL을 끈다</li><li>내구성은 체크포인트가 맡는다</li></ul></td></tr>
+      </table></div>
+      <h3>Flink가 RocksDB를 쓰는 모양</h3>
+      <div class="table-wrap"><table>
+        <tr><th>RocksDB</th><th>Flink에서</th></tr>
+        <tr><td>인스턴스</td><td><ul><li>서브태스크마다 하나</li><li>TM 로컬 디스크에 전용 폴더 하나</li></ul></td></tr>
+        <tr><td>칼럼 패밀리 (테이블 같은 것)</td><td><ul><li>상태 이름마다 하나</li></ul></td></tr>
+        <tr><td>키</td><td><ul><li><code>[키 그룹][키][namespace]</code> 바이트</li><li>키 그룹이 앞이라 같은 키 그룹 데이터가 정렬된 채 붙어 있음</li><li>병렬도를 바꿀 때 키 그룹 범위째 떼어 옮기기 쉬움</li></ul></td></tr>
+        <tr><td>값</td><td><ul><li>상태 값을 직렬화한 바이트</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c5">
+      <h2><span class="no">5</span>읽기 경로와 캐싱</h2>
+      <div class="fig"><svg viewBox="-2 -2 1004 402" style="max-width:1004px;margin:0 auto" role="img" aria-label="RocksDB 읽기 경로"><defs><marker id="f2052823-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f2052823-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f2052823-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f2052823-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f2052823-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="20" width="150" height="40" rx="7" style="fill:var(--panel);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="95.0" y="44.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">value() · 키 A</text><text x="40" y="106" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">memtable</text><rect x="200.0" y="86" width="292.0" height="32" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="346.0" y="106.37" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">없음</text><text x="40" y="166" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">읽기 전용 memtable</text><rect x="200.0" y="146" width="292.0" height="32" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="346.0" y="166.37" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">없음</text><text x="40" y="226" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">L0 (전부, 최신부터)</text><rect x="200.0" y="206" width="92.0" height="32" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="246.0" y="226.37" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST 3 · 없음</text><rect x="300.0" y="206" width="92.0" height="32" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="346.0" y="226.37" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST 2 · 없음</text><rect x="400.0" y="206" width="92.0" height="32" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="446.0" y="226.37" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">SST 1 · 없음</text><text x="40" y="296" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">L1 (범위 맞는 1개)</text><rect x="200.0" y="276" width="92.0" height="32" rx="7" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="246.0" y="296.37" font-size="11.5" style="fill:var(--ok)" font-weight="600" text-anchor="middle" opacity="1">a ~ h</text><rect x="300.0" y="276" width="92.0" height="32" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="346.0" y="296.37" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">i ~ p</text><rect x="400.0" y="276" width="92.0" height="32" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="446.0" y="296.37" font-size="11.5" style="fill:var(--ink)" font-weight="600" text-anchor="middle" opacity="1">q ~ z</text><text x="40" y="366" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">L2</text><rect x="200.0" y="346" width="67.0" height="32" rx="7" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="233.5" y="366.37" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">a ~ e</text><rect x="275.0" y="346" width="67.0" height="32" rx="7" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="308.5" y="366.37" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">f ~ k</text><rect x="350.0" y="346" width="67.0" height="32" rx="7" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="383.5" y="366.37" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">l ~ r</text><rect x="425.0" y="346" width="67.0" height="32" rx="7" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="458.5" y="366.37" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="middle" opacity="1">s ~ z</text><path d="M95,62 L95,84" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2052823-warn)"/><path d="M28,118 L28,140" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2052823-warn)"/><path d="M28,178 L28,200" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2052823-warn)"/><path d="M28,248 L28,270" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2052823-warn)"/><line x1="28" y1="84" x2="28" y2="300" style="stroke:var(--warn)" stroke-width="2"/><circle cx="180" cy="96" r="11" style="fill:var(--warn)"/><text x="180" y="100.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><circle cx="180" cy="222" r="11" style="fill:var(--warn)"/><text x="180" y="226.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><circle cx="180" cy="292" r="11" style="fill:var(--warn)"/><text x="180" y="296.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text><rect x="620" y="120" width="360" height="250" rx="12" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="636" y="146" font-size="13.5" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">SST 파일 하나 안</text><circle cx="960" cy="140" r="11" style="fill:var(--warn)"/><text x="960" y="144.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">4</text><rect x="640" y="164" width="180" height="40" rx="7" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="730.0" y="188.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">블룸 필터</text><rect x="640" y="234" width="180" height="40" rx="7" style="fill:var(--panel);stroke:var(--acc)" stroke-width="1.4" opacity="1"/><text x="730.0" y="258.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">인덱스 블록</text><rect x="640" y="304" width="180" height="40" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="730.0" y="328.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">데이터 블록</text><path d="M730,206 L730,232" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2052823-acc)"/><path d="M730,276 L730,302" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f2052823-acc)"/><text x="830" y="190" font-size="11.5" style="fill:var(--sub)" font-weight="600" text-anchor="start" opacity="1">없음 → 건너뜀</text><rect x="852" y="304" width="112" height="40" rx="7" style="fill:var(--warnbg);stroke:var(--warn)" stroke-width="1.4" opacity="1"/><text x="908.0" y="328.75" font-size="12.5" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">블록 캐시</text><path d="M850,324 L822,324" fill="none" style="stroke:var(--warn)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round" marker-end="url(#f2052823-warn)"/><path d="M502,292 C560,292 570,260 618,260" fill="none" style="stroke:var(--ok)" stroke-width="1.6" stroke-dasharray="5 4"/></svg></div>
+      <ol>
+        <li>memtable → 읽기 전용 memtable 순으로 본다.</li>
+        <li><b>L0는 전부</b> 최신 파일부터 본다.
+          <ul>
+            <li>키 범위가 겹쳐서 어느 파일에 있을지 모르기 때문이다</li>
+          </ul></li>
+        <li><b>L1부터는 레벨당 한 파일</b>만 본다.
+          <ul>
+            <li>파일별 키 범위 목록으로 키가 들어갈 파일을 바로 고른다</li>
+            <li>찾으면 거기서 멈춘다</li>
+          </ul></li>
+        <li>파일 하나는 <b>블룸 필터 → 인덱스 블록 → 데이터 블록</b> 순으로 좁힌다.
+          <ul>
+            <li>블룸 필터가 "확실히 없음"이면 파일을 열지 않는다</li>
+            <li>인덱스로 데이터 블록 하나를 고른다</li>
+            <li>데이터 블록은 <b>블록 캐시</b>(메모리)에 있으면 디스크까지 가지 않는다</li>
+          </ul></li>
+      </ol>
+      <h3>알아 둘 성질</h3>
+      <div class="table-wrap"><table>
+        <tr><th>성질</th><th>내용</th></tr>
+        <tr><td>처음 찾은 값이 정답</td><td><ul><li>위가 최신</li><li>아래 레벨에 같은 키의 옛 값이 있어도 보지 않음</li></ul></td></tr>
+        <tr><td>삭제 (tombstone)</td><td><ul><li>지우면 "지워짐" 표시를 새로 씀</li><li>위에서 이 표시를 먼저 만나면 "없음"</li></ul></td></tr>
+        <tr><td>읽기 증폭</td><td><ul><li>키 하나를 읽으려고 여러 곳을 보는 것</li><li>찾는 키가 없을 때 가장 비쌈 (끝까지 내려가야 함)</li><li>블룸 필터와 컴팩션이 줄여 줌</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c6">
+      <h2><span class="no">6</span>컴팩션은 언제</h2>
+      <div class="table-wrap"><table>
+        <tr><th>계기</th><th>동작</th></tr>
+        <tr><td>L0 파일 수가 기준을 넘음 (RocksDB 기본 4개)</td><td>L0 파일들을 L1과 합침</td></tr>
+        <tr><td>어떤 레벨 크기가 목표를 넘음 (L1 기본 256MB, 아래로 10배씩)</td><td>넘친 레벨 일부를 다음 레벨과 합침</td></tr>
+      </table></div>
+      <h3>알아 둘 성질</h3>
+      <div class="table-wrap"><table>
+        <tr><th>성질</th><th>내용</th></tr>
+        <tr><td>실행</td><td><ul><li>백그라운드 스레드</li><li>TM의 CPU · 디스크를 씀</li></ul></td></tr>
+        <tr><td>못 따라가면 (write stall)</td><td><ul><li>L0가 계속 쌓이면 RocksDB가 <b>쓰기를 늦추거나 멈춤</b></li><li>그 연산자가 느려져 백프레셔로 번짐</li></ul></td></tr>
+        <tr><td>상태 TTL 정리</td><td><ul><li>만료된 값도 컴팩션 때 실제로 지워짐 (컴팩션 필터)</li><li>TTL을 걸어도 디스크 공간은 컴팩션이 돌아야 줄어듦</li></ul></td></tr>
+        <tr><td>위 기준값</td><td><ul><li>RocksDB 기본값</li><li>Flink 사전 설정 옵션에 따라 다를 수 있어 실제 잡 설정으로 확인</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c7">
+      <h2><span class="no">7</span>메모리</h2>
+      <div class="table-wrap"><table>
+        <tr><th>항목</th><th>내용</th></tr>
+        <tr><td>어디에 잡히나</td><td><ul><li>memtable · 블록 캐시는 JVM 힙 밖의 <b>네이티브 메모리</b></li></ul></td></tr>
+        <tr><td>크기를 정하는 것</td><td><ul><li><b>관리 메모리</b>에서 몫을 정해 줌</li><li><code>state.backend.rocksdb.memory.managed</code> (기본 켜짐)</li><li>같은 슬롯의 RocksDB들이 이 몫을 나눠 씀</li></ul></td></tr>
+        <tr><td>계산 밖 네이티브 메모리</td><td><ul><li>예: 싱크의 파일 쓰기 버퍼, 외부 라이브러리의 lookup 캐시</li><li><code>taskmanager.memory.jvm-overhead.fraction</code> (기본 0.1, 최소 192MB · 최대 1GB)로 여유를 둠</li></ul></td></tr>
+        <tr><td>한도를 넘으면</td><td><ul><li>JVM OOM이 아니라 쿠버네티스가 파드를 죽임 (<b>OOMKilled</b>)</li><li>힙 덤프로는 원인이 안 보임</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c8">
+      <h2><span class="no">8</span>체크포인트와의 연결</h2>
+      <h3>백엔드와 S3의 관계</h3>
+      <div class="table-wrap"><table>
+        <tr><th></th><th>HashMap</th><th>RocksDB</th></tr>
+        <tr><td>설정</td><td><ul><li><code>state.backend.type: hashmap</code> (기본)</li></ul></td><td><ul><li><code>state.backend.type: rocksdb</code></li><li><code>execution.checkpointing.incremental: true</code> (기본 꺼짐)</li></ul></td></tr>
+        <tr><td>올릴 곳 (공통)</td><td colspan="2"><ul><li><code>execution.checkpointing.dir: s3://…</code> (옛 이름 <code>state.checkpoints.dir</code>)</li><li>안 주면 JM 메모리에 둠 — JM이 죽으면 사라짐</li></ul></td></tr>
+        <tr><td>③ 사본 올리기</td><td><ul><li>힙의 상태를 직렬화해 매번 <b>전체</b> 올림</li></ul></td><td><ul><li>memtable을 SST로 내려쓴 뒤 <b>새로 생긴 SST만</b> 올림</li></ul></td></tr>
+        <tr><td>④ 복원</td><td><ul><li>S3의 사본을 힙으로 읽어 들임</li></ul></td><td><ul><li>필요한 SST를 로컬 폴더로 내려받음</li><li>그 파일들로 RocksDB를 다시 엶</li></ul></td></tr>
+      </table></div>
+
+      <h3>RocksDB 증분 체크포인트</h3>
+      <div class="fig"><svg viewBox="-2 -2 964 382" style="max-width:964px;margin:0 auto" role="img" aria-label="증분 체크포인트"><defs><marker id="f1739649-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--sub)"/></marker><marker id="f1739649-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--acc)"/></marker><marker id="f1739649-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--ok)"/></marker><marker id="f1739649-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--warn)"/></marker><marker id="f1739649-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" style="fill:var(--bad)"/></marker></defs><rect x="20" y="20" width="420" height="110" rx="12" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><circle cx="46" cy="41" r="11" style="fill:var(--acc)"/><text x="46" y="45.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">1</text><text x="64" y="46" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">체크포인트 N 시점 · 로컬 SST</text><rect x="40" y="64" width="110" height="44" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="95.0" y="90.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">SST 1</text><rect x="170" y="64" width="110" height="44" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="225.0" y="90.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">SST 2</text><rect x="300" y="64" width="110" height="44" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="355.0" y="90.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">SST 3</text><rect x="520" y="20" width="420" height="110" rx="12" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><circle cx="546" cy="41" r="11" style="fill:var(--ok)"/><text x="546" y="45.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">3</text><text x="564" y="46" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">체크포인트 N+1 시점 · 로컬 SST</text><rect x="540" y="64" width="110" height="44" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="595.0" y="90.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">SST 3</text><rect x="670" y="64" width="110" height="44" rx="7" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="725.0" y="90.94" font-size="13" style="fill:var(--ok)" font-weight="700" text-anchor="middle" opacity="1">SST 4</text><rect x="800" y="64" width="110" height="44" rx="7" style="fill:var(--okbg);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="855.0" y="90.94" font-size="13" style="fill:var(--ok)" font-weight="700" text-anchor="middle" opacity="1">SST 5</text><circle cx="480" cy="41" r="11" style="fill:var(--sub)"/><text x="480" y="45.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">2</text><path d="M446,86 L514,86" fill="none" style="stroke:var(--sub)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1739649-sub)"/><rect x="20" y="200" width="920" height="158" rx="12" style="fill:var(--soft);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="36" y="226" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="start" opacity="1">S3 · 체크포인트 shared/</text><rect x="60" y="244" width="120" height="40" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="120.0" y="268.94" font-size="13" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">SST 1</text><rect x="236" y="244" width="120" height="40" rx="7" style="fill:var(--panel);stroke:var(--line)" stroke-width="1.4" opacity="1"/><text x="296.0" y="268.94" font-size="13" style="fill:var(--sub)" font-weight="700" text-anchor="middle" opacity="1">SST 2</text><rect x="412" y="244" width="120" height="40" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="472.0" y="268.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">SST 3</text><rect x="588" y="244" width="120" height="40" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="648.0" y="268.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">SST 4</text><rect x="764" y="244" width="120" height="40" rx="7" style="fill:var(--panel);stroke:var(--ok)" stroke-width="1.4" opacity="1"/><text x="824.0" y="268.94" font-size="13" style="fill:var(--ink)" font-weight="700" text-anchor="middle" opacity="1">SST 5</text><path d="M60,298 L60,306 L532,306 L532,298" fill="none" style="stroke:var(--acc)" stroke-width="2"/><text x="296" y="324" font-size="12" style="fill:var(--acc)" font-weight="700" text-anchor="middle" opacity="1">체크포인트 N 이 참조</text><path d="M412,312 L412,320 L884,320 L884,312" fill="none" style="stroke:var(--ok)" stroke-width="2"/><text x="648" y="338" font-size="12" style="fill:var(--ok)" font-weight="700" text-anchor="middle" opacity="1">체크포인트 N+1 이 참조</text><path d="M230,132 L230,196" fill="none" style="stroke:var(--acc)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1739649-acc)"/><path d="M730,132 L730,196" fill="none" style="stroke:var(--ok)" stroke-width="2" stroke-linejoin="round" marker-end="url(#f1739649-ok)"/><circle cx="36" cy="264" r="11" style="fill:var(--sub)"/><text x="36" y="268.5" font-size="12" fill="#fff" font-weight="700" text-anchor="middle">4</text></svg></div>
+      <ol>
+        <li><b>체크포인트 N</b>
+          <ul>
+            <li>memtable을 먼저 SST로 내려씀</li>
+            <li>살아 있는 SST 1 · 2 · 3을 S3에 올림</li>
+          </ul></li>
+        <li><b>컴팩션</b>
+          <ul>
+            <li>그 사이 SST 1 · 2를 합쳐 새 파일 4 · 5를 만듦</li>
+          </ul></li>
+        <li><b>체크포인트 N+1</b>
+          <ul>
+            <li>새로 생긴 <b>4 · 5만</b> 올림</li>
+            <li>3은 이미 S3에 있으니 참조만 함</li>
+            <li>가능한 이유: SST는 한 번 쓰면 바뀌지 않음</li>
+          </ul></li>
+        <li><b>정리</b>
+          <ul>
+            <li>체크포인트 N이 만료되면 아무도 참조하지 않는 1 · 2를 지움</li>
+          </ul></li>
+      </ol>
+      <ul>
+        <li><b>주의</b>
+          <ul>
+            <li>컴팩션 직후에는 새 파일이 많아 다음 체크포인트 크기가 튈 수 있음</li>
+          </ul></li>
+      </ul>
+      <p class="figcap">체크포인트 자체의 흐름(배리어, 목차, 복구)은 <a href="checkpoint.html">체크포인트와 장애 복구</a>.</p>
+    </section>
+
+    <section class="chapter" id="c9">
+      <h2><span class="no">9</span>설정 한눈에</h2>
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>값</th><th>설명</th></tr>
+        <tr><td><code>state.backend.type</code></td><td>rocksdb (예시)</td><td><ul><li>상태를 둘 곳</li><li>기본값은 hashmap</li></ul></td></tr>
+        <tr><td><code>execution.checkpointing.incremental</code></td><td>true (예시)</td><td><ul><li>RocksDB 증분 체크포인트</li><li>기본값은 false</li></ul></td></tr>
+        <tr><td><code>taskmanager.memory.managed.fraction</code></td><td>기본값 0.4</td><td><ul><li>Flink 메모리 중 관리 메모리 비율</li><li>HashMap이면 낮춰서 힙으로</li></ul></td></tr>
+        <tr><td><code>state.backend.rocksdb.memory.managed</code></td><td>기본값 true</td><td>RocksDB 메모리를 관리 메모리 안에서 제한</td></tr>
+        <tr><td><code>taskmanager.memory.jvm-overhead.*</code></td><td>기본값</td><td>관리 밖 네이티브 메모리 여유</td></tr>
+        <tr><td>상태 TTL</td><td>기본값 없음 (영구)</td><td><ul><li>DataStream: <code>StateTtlConfig</code></li><li>SQL: <code>table.exec.state.ttl</code></li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter" id="c10">
+      <h2><span class="no">10</span>한 장 요약</h2>
+      <ol>
+        <li>상태는 연산자가 레코드 사이에 들고 있는 값이고, 코드는 현재 키에 맞춰진 창구로 읽고 쓴다.</li>
+        <li>상태 백엔드는 상태가 있는 서브태스크마다 따로 있고, 자기 키 그룹만 갖는다.</li>
+        <li>HashMap은 힙에 객체로 둬서 빠르고, RocksDB는 디스크에 바이트로 둬서 크게 담는다.</li>
+        <li>RocksDB는 LSM이라 쓰기는 memtable에 넣고 끝나며, 파일은 불변이고 컴팩션으로 정리된다.</li>
+        <li>읽기는 위 레벨부터 찾고, 블룸 필터와 블록 캐시가 디스크 접근을 줄인다.</li>
+        <li>파일이 불변이라 체크포인트 때 새 파일만 올리는 증분 체크포인트가 가능하다.</li>
+      </ol>
+    </section>
+
+    <nav class="pager">
+      <a href="checkpoint.html"><small>← 이전</small>체크포인트와 장애 복구</a>
+      <a href="join.html" style="text-align:right"><small>다음 →</small>조인과 상태</a>
+    </nav>
+  </main>
+</div>
+<footer class="site-foot">© 2026 dev-donghwan · <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/deed.ko" rel="license noopener" target="_blank">CC BY-NC-ND 4.0</a> · 출처를 밝히면 공유할 수 있고, 상업적 이용과 변경은 허락하지 않습니다.</footer>
+<script src="../assets/site.js"></script>
+</body>
+</html>

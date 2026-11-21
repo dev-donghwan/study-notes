@@ -1,0 +1,53 @@
+<!doctype html>
+<!--
+  공통 틀: 문서 페이지 (tools/build.py 가 채운다. 직접 고치지 말고 원본 src/<주제>/<문서>.html 을 고친다)
+  자리표시자
+    {{root}}         사이트 뿌리까지의 상대 경로 (예: "../")
+    {{title}}        문서 제목 (원본 머리말의 title)
+    {{description}}  검색 · 미리보기용 한 줄 (머리말 description)
+    {{lead}}         제목 아래 한 문장 (머리말 lead)
+    {{topic}}        주제 이름 (series.json 의 title)
+    {{toc}}          목차 <li> 들. 장 제목(h2)에서 자동 생성
+    {{body}}         원본 본문. 장 번호 · id 는 자동으로 붙음
+    {{pager}}        이전 / 다음 링크. series.json 순서로 자동 생성
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}} · 공부 노트</title>
+<meta name="description" content="{{description}}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="{{root}}assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{root}}index.html">공부 노트</a>
+  <a class="crumb" href="index.html">/ {{topic}}</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" type="button">다크 모드</button>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="목차">
+    <div class="toc-title">목차</div>
+    <ol>
+{{toc}}
+    </ol>
+  </nav>
+
+  <main>
+    <div class="doc-head">
+      <h1>{{title}}</h1>
+      <p>{{lead}}</p>
+    </div>
+{{body}}
+    <nav class="pager">
+{{pager}}
+    </nav>
+  </main>
+</div>
+<footer class="site-foot">© 2026 dev-donghwan · <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/deed.ko" rel="license noopener" target="_blank">CC BY-NC-ND 4.0</a> · 출처를 밝히면 공유할 수 있고, 상업적 이용과 변경은 허락하지 않습니다.</footer>
+<script src="{{root}}assets/site.js"></script>
+</body>
+</html>

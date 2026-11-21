@@ -1,0 +1,83 @@
+{
+  "title": "Flink",
+  "description": "Flink 시리즈: 잡이 뜨는 과정부터 조인 · 싱크까지",
+  "intro": "잡이 뜨는 과정부터 결과를 한 번만 내보내기까지 순서대로 읽는다.",
+  "pages": [
+    {
+      "file": "job-lifecycle.html",
+      "title": "잡이 뜨는 과정",
+      "keywords": [
+        "제출",
+        "JobManager",
+        "잡 그래프",
+        "체이닝",
+        "서브태스크",
+        "슬롯",
+        "TaskManager",
+        "배치"
+      ]
+    },
+    {
+      "file": "dataflow.html",
+      "title": "데이터 흐름",
+      "keywords": [
+        "버퍼",
+        "이벤트 시간",
+        "워터마크",
+        "늦은 데이터",
+        "백프레셔"
+      ]
+    },
+    {
+      "file": "checkpoint.html",
+      "title": "체크포인트와 장애 복구",
+      "keywords": [
+        "배리어",
+        "체크포인트",
+        "정렬",
+        "비정렬",
+        "장애 복구",
+        "HA",
+        "세이브포인트"
+      ]
+    },
+    {
+      "file": "state-backend.html",
+      "title": "상태 백엔드와 캐싱",
+      "keywords": [
+        "HashMap",
+        "RocksDB",
+        "LSM",
+        "컴팩션",
+        "블록 캐시",
+        "관리 메모리",
+        "증분 체크포인트"
+      ]
+    },
+    {
+      "file": "join.html",
+      "title": "조인과 상태",
+      "keywords": [
+        "일반 조인",
+        "구간 조인",
+        "윈도우 조인",
+        "temporal",
+        "lookup",
+        "TTL",
+        "핫 키"
+      ]
+    },
+    {
+      "file": "sink-exactly-once.html",
+      "title": "싱크의 exactly-once",
+      "keywords": [
+        "트랜잭션",
+        "2단계 커밋",
+        "사전 커밋",
+        "롤백",
+        "read_committed",
+        "멱등 싱크"
+      ]
+    }
+  ]
+}

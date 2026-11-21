@@ -1,0 +1,36 @@
+<!doctype html>
+<!--
+  공통 틀: 홈 (index.html). src/site.json 과 각 주제의 series.json 으로 생성.
+  목록 규칙: 주제는 순서가 없으므로 번호 없이 "주제 | 한 줄 설명".
+  자리표시자: {{title}} {{intro}} {{description}} {{rows}}
+-->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="index.html">{{title}}</a>
+  <span class="spacer"></span>
+  <button class="theme-btn" type="button">다크 모드</button>
+</header>
+
+<section class="hero">
+  <h1>{{title}}</h1>
+  <p>{{intro}}</p>
+</section>
+
+<main class="topics">
+  <div class="cards">
+{{rows}}
+  </div>
+</main>
+<footer class="site-foot">© 2026 dev-donghwan · <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/deed.ko" rel="license noopener" target="_blank">CC BY-NC-ND 4.0</a> · 출처를 밝히면 공유할 수 있고, 상업적 이용과 변경은 허락하지 않습니다.</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

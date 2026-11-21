@@ -1,0 +1,66 @@
+<!--
+title: 샘플: 새 문서가 사이트에 오르기까지
+description: 템플릿 형식을 채운 예시 문서
+lead: 원본 하나가 공통 틀에 감싸여 사이트 HTML 이 되기까지를 따라간다.
+-->
+    <section class="chapter">
+      <h2 data-toc="흐름">원본에서 사이트까지의 흐름</h2>
+      <!--fig:sample-flow-->
+      <ol>
+        <li><b>공통 틀로 감싸기</b>
+          <ul>
+            <li><code>build.py</code>가 원본 본문을 <code>templates/partials/layout.html</code>에 넣음</li>
+            <li>장 번호 · 목차 · 이전/다음 링크를 자동으로 붙임</li>
+          </ul></li>
+        <li><b>규칙 검사</b>
+          <ul>
+            <li>STYLE.md 의 [자동] 규칙을 결과 HTML 에서 검사</li>
+            <li>위반하면 파일:줄과 이유를 보여 주고 멈춤</li>
+          </ul></li>
+        <li><b>사이트 HTML</b>
+          <ul>
+            <li><code>&lt;주제&gt;/&lt;문서&gt;.html</code>로 저장</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <section class="chapter">
+      <h2>원본에 쓰는 것과 틀이 하는 것</h2>
+      <div class="table-wrap"><table>
+        <tr><th></th><th>원본 (src)</th><th>공통 틀 · 빌드</th></tr>
+        <tr><td>머리말</td><td><ul><li>title · description · lead</li></ul></td><td><ul><li>head · 문서 제목 · 첫 문장에 채움</li></ul></td></tr>
+        <tr><td>장</td><td><ul><li><code>&lt;section class="chapter"&gt;</code> + h2</li></ul></td><td><ul><li>id · 번호 · 목차</li></ul></td></tr>
+        <tr><td>순서</td><td><ul><li>series.json 의 pages</li></ul></td><td><ul><li>목록 번호 · 이전/다음 링크</li></ul></td></tr>
+      </table></div>
+      <h3>알아 둘 성질</h3>
+      <div class="table-wrap"><table>
+        <tr><th>성질</th><th>내용</th></tr>
+        <tr><td>그림 이름</td><td><ul><li>사이트 전체에서 하나의 이름 공간</li><li>"&lt;주제&gt;-" 접두어를 붙임</li></ul></td></tr>
+        <tr><td>목차 문구</td><td><ul><li>기본은 h2 그대로</li><li>짧게 하려면 <code>data-toc</code></li></ul></td></tr>
+      </table></div>
+      <div class="note"><ul><li>결과 HTML 은 직접 고치지 않는다. 다음 빌드에서 덮어써진다</li></ul></div>
+    </section>
+
+    <section class="chapter">
+      <h2>코드와 설정</h2>
+      <pre class="code" data-lang="Shell"><code>cp templates/page.html src/kafka/new-doc.html
+python3 tools/build.py</code></pre>
+      <div class="table-wrap"><table>
+        <tr><th>파일</th><th>기본값</th><th>설명</th></tr>
+        <tr><td><code>series.json</code> <code>hidden</code></td><td>false</td><td><ul><li>true 면 홈 목록에 안 나옴</li><li>샘플 · 작성 중 주제에 씀</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <section class="chapter">
+      <h2>한 장 요약</h2>
+      <ul>
+        <li><b>원본</b>
+          <ul>
+            <li>머리말 + 장만 쓴다</li>
+          </ul></li>
+        <li><b>빌드</b>
+          <ul>
+            <li>틀로 감싸고 번호 · 목차 · 링크를 붙인 뒤 규칙을 검사한다</li>
+          </ul></li>
+      </ul>
+    </section>

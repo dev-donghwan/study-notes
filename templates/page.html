@@ -1,0 +1,113 @@
+<!--
+title: 문서 제목 (주제 이름을 앞에, 예: Flink 조인과 상태)
+description: 검색 · 미리보기용 한 줄 (마침표 없이)
+lead: 제목 아래 한 문장. 이 문서가 무엇을 따라가는지.
+-->
+<!--
+  ================================================================ 문서 템플릿
+  사용법
+    1. 이 파일을 src/<주제>/<문서>.html 로 복사한다.
+    2. src/<주제>/series.json 의 pages 에 {"file", "title", "summary"} 한 줄을 읽는 순서 자리에 넣는다.
+    3. 그림은 tools/figures_<주제>_<문서>.py 에 만들고 아래처럼 <!--fig:이름--> 으로 넣는다.
+    4. python3 tools/build.py → 규칙 검사 통과 확인 → 브라우저로 확인.
+
+  공통 틀(templates/partials/layout.html)이 head · 상단 바 · 목차 · 장 번호 · 이전/다음 링크를 만든다.
+  이 파일에는 맨 위 머리말 주석과 <section class="chapter"> 들만 쓴다. 장 번호 · id 는 쓰지 않는다.
+
+  이 주석 블록과 아래 "형식 예시" 주석들은 복사한 뒤 지운다. (남겨도 결과에는 HTML 주석으로만 남는다)
+  자세한 규칙은 STYLE.md, 채운 예시는 src/sample/sample.html.
+  ================================================================
+-->
+
+    <!-- ===== 장 하나 = section 하나. h2 가 장 제목이자 목차 항목. 목차를 짧게: data-toc ===== -->
+    <section class="chapter">
+      <h2 data-toc="짧은 목차 이름">장 제목: 길어도 됨</h2>
+
+      <!-- 장 첫 줄 요약이 필요하면 lead 한 문장 (두 문장 이상 금지) -->
+      <p class="lead">이 장에서 볼 것을 한 문장으로.</p>
+
+      <!-- 그림: tools/figures_*.py 의 FIGS 이름. 그림 안에는 상자 이름 · 짧은 라벨 · 번호 배지 · 범례만 -->
+      <!--fig:sample-flow-->
+
+      <!-- 순서가 있는 과정: <ol> + 굵은 제목 + 하위 불릿. 번호는 그림의 배지 번호와 맞춘다 -->
+      <ol>
+        <li><b>단계 이름</b>
+          <ul>
+            <li>한 줄에 한 사실</li>
+            <li>두 문장이 되면 불릿을 나눈다</li>
+          </ul></li>
+        <li><b>다음 단계</b>
+          <ul>
+            <li>…</li>
+          </ul></li>
+      </ol>
+    </section>
+
+    <section class="chapter">
+      <h2>비교와 성질</h2>
+
+      <!-- 순서 없는 묶음: <ul> + 굵은 제목 + 하위 불릿. 제목 없는 "문장 + 하위 불릿" 나열 금지 -->
+      <ul>
+        <li><b>묶음 제목</b>
+          <ul>
+            <li>내용</li>
+          </ul></li>
+      </ul>
+
+      <!-- 성질 나열: "항목 | 내용" 표. 칸 안은 항상 <ul> 불릿 (한 개여도 같은 열이면 불릿으로 맞춘다) -->
+      <h3>알아 둘 성질</h3>
+      <div class="table-wrap"><table>
+        <tr><th>성질</th><th>내용</th></tr>
+        <tr><td>성질 이름</td><td><ul><li>내용 1</li><li>내용 2</li></ul></td></tr>
+      </table></div>
+
+      <!-- 둘 이상 비교: 첫 열은 비교 기준, 나머지 열은 대상 -->
+      <div class="table-wrap"><table>
+        <tr><th></th><th>A</th><th>B</th></tr>
+        <tr><td>기준</td><td><ul><li>…</li></ul></td><td><ul><li>…</li></ul></td></tr>
+      </table></div>
+
+      <!-- 묶음 표: 한 묶음 아래 하위 항목이 있을 때. 첫 칸 class="zone" rowspan, 하위는 class="child" (└ 표시) -->
+      <div class="table-wrap"><table class="grouped">
+        <tr><th>영역</th><th>구성 요소</th><th>하는 일</th></tr>
+        <tr><td class="zone" rowspan="2">묶음</td><td>상위</td><td><ul><li>…</li></ul></td></tr>
+        <tr><td class="child">하위</td><td><ul><li>…</li></ul></td></tr>
+      </table></div>
+
+      <!-- 주의 · 보충: note. 안에도 불릿 -->
+      <div class="note"><ul><li>꼭 알아야 할 주의 한 줄</li></ul></div>
+
+      <!-- 그림 · 표 아래 짧은 보충: figcap 불릿 -->
+      <ul class="figcap"><li>보충 한 줄</li></ul>
+
+      <!-- 다른 장 · 다른 문서 참조: "(N장)" 금지, 장 이름 링크. 같은 문서는 #cN (장 순서 번호) -->
+      <p class="figcap">자세한 흐름은 <a href="other-doc.html#c2">다른 문서의 장 이름</a>.</p>
+    </section>
+
+    <section class="chapter">
+      <h2>코드와 설정</h2>
+
+      <!-- 코드 · SQL · 설정 파일: 코드 블록. data-lang 은 SQL · Java · YAML · Shell 등 표시용 이름.
+           <, >, & 는 &lt; &gt; &amp; 로 적는다. 본문 속 짧은 이름(옵션 키 · 메서드)은 <code> 인라인 -->
+      <pre class="code" data-lang="SQL"><code>SELECT a.id, b.name
+FROM a
+JOIN b FOR SYSTEM_TIME AS OF a.proc_time
+  ON a.id = b.id</code></pre>
+
+      <!-- 설정 표: 설정 | 기본값 | 설명. 기본값은 쓰는 버전의 소스 태그로 확인 (STYLE.md 근거). 사내 값은 넣지 않는다 -->
+      <div class="table-wrap"><table>
+        <tr><th>설정</th><th>기본값</th><th>설명</th></tr>
+        <tr><td><code>option.key</code></td><td>값</td><td><ul><li>무엇을 정하나</li><li>언제 바꾸나</li></ul></td></tr>
+      </table></div>
+    </section>
+
+    <!-- 마지막 장은 항상 "한 장 요약": 굵은 묶음 3~5개 + 하위 불릿 -->
+    <section class="chapter">
+      <h2>한 장 요약</h2>
+      <ul>
+        <li><b>핵심 1</b>
+          <ul>
+            <li>…</li>
+          </ul></li>
+      </ul>
+    </section>
