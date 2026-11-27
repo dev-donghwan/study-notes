@@ -61,7 +61,7 @@
             <li>그래서 <code>count</code>는 변수 하나처럼 보여도, 현재 키에 따라 다른 칸을 가리키는 <b>키별 저장소의 창구</b>다</li>
           </ul></li>
       </ul>
-      <h3>레코드가 오면 백엔드에 무엇을 묻나</h3>
+      <h3>연산별 상태 접근</h3>
       <div class="table-wrap"><table>
         <tr><th>상황</th><th>① 꺼내는 것</th><th>② 넣는 것</th></tr>
         <tr><td>분당 클릭 수 집계</td><td><ul><li>이 상품 · 이 윈도우의 지금까지 합계</li></ul></td><td><ul><li>합계 + 1</li></ul></td></tr>
@@ -84,7 +84,7 @@
         <tr><td>체크포인트</td><td><ul><li>매번 전체</li></ul></td><td><ul><li>증분 가능 (새 파일만)</li></ul></td></tr>
         <tr><td>관리 메모리</td><td><ul><li>안 씀</li></ul></td><td><ul><li>씀 (memtable · 블록 캐시)</li></ul></td></tr>
       </table></div>
-      <h3>언제 무엇을 고르나</h3>
+      <h3>백엔드 선택 기준</h3>
       <div class="table-wrap"><table>
         <tr><th>상황</th><th>고를 것</th><th>같이 챙길 것</th></tr>
         <tr><td><ul><li>상태가 힙에 넉넉히 들어감</li><li>지연이 중요</li></ul></td><td>HashMap</td><td><ul><li>관리 메모리를 안 쓰니 <code>taskmanager.memory.managed.fraction</code>을 낮춰 힙으로 돌림</li></ul></td></tr>
@@ -129,9 +129,9 @@
             <li>같은 키의 옛 값과 지운 값은 이때 버려진다</li>
           </ul></li>
       </ol>
-      <h3>알아 둘 성질</h3>
+      <h3>불변 파일과 레벨</h3>
       <div class="table-wrap"><table>
-        <tr><th>성질</th><th>내용</th></tr>
+        <tr><th>항목</th><th>내용</th></tr>
         <tr><td>같은 키를 다시 쓰면</td><td><ul><li>옛 값은 그대로 두고, 새 파일에 새 값을 쓴다</li><li><b>위쪽(최근) 파일의 값이 진짜</b></li></ul></td></tr>
         <tr><td>레벨별 키 범위</td><td><ul><li>L0 — 파일끼리 키 범위가 겹친다</li><li>L1부터 — 같은 레벨 안에서는 겹치지 않는다 (그림의 a ~ h, i ~ p …)</li></ul></td></tr>
         <tr><td>장애 대비 로그 (WAL)</td><td><ul><li>Flink는 RocksDB의 WAL을 끈다</li><li>내구성은 체크포인트가 맡는다</li></ul></td></tr>
@@ -167,9 +167,9 @@
             <li>데이터 블록은 <b>블록 캐시</b>(메모리)에 있으면 디스크까지 가지 않는다</li>
           </ul></li>
       </ol>
-      <h3>알아 둘 성질</h3>
+      <h3>tombstone과 읽기 증폭</h3>
       <div class="table-wrap"><table>
-        <tr><th>성질</th><th>내용</th></tr>
+        <tr><th>항목</th><th>내용</th></tr>
         <tr><td>처음 찾은 값이 정답</td><td><ul><li>위가 최신</li><li>아래 레벨에 같은 키의 옛 값이 있어도 보지 않음</li></ul></td></tr>
         <tr><td>삭제 (tombstone)</td><td><ul><li>지우면 "지워짐" 표시를 새로 씀</li><li>위에서 이 표시를 먼저 만나면 "없음"</li></ul></td></tr>
         <tr><td>읽기 증폭</td><td><ul><li>키 하나를 읽으려고 여러 곳을 보는 것</li><li>찾는 키가 없을 때 가장 비쌈 (끝까지 내려가야 함)</li><li>블룸 필터와 컴팩션이 줄여 줌</li></ul></td></tr>
@@ -183,9 +183,9 @@
         <tr><td>L0 파일 수가 기준을 넘음 (RocksDB 기본 4개)</td><td>L0 파일들을 L1과 합침</td></tr>
         <tr><td>어떤 레벨 크기가 목표를 넘음 (L1 기본 256MB, 아래로 10배씩)</td><td>넘친 레벨 일부를 다음 레벨과 합침</td></tr>
       </table></div>
-      <h3>알아 둘 성질</h3>
+      <h3>write stall과 TTL 정리</h3>
       <div class="table-wrap"><table>
-        <tr><th>성질</th><th>내용</th></tr>
+        <tr><th>항목</th><th>내용</th></tr>
         <tr><td>실행</td><td><ul><li>백그라운드 스레드</li><li>TM의 CPU · 디스크를 씀</li></ul></td></tr>
         <tr><td>못 따라가면 (write stall)</td><td><ul><li>L0가 계속 쌓이면 RocksDB가 <b>쓰기를 늦추거나 멈춤</b></li><li>그 연산자가 느려져 백프레셔로 번짐</li></ul></td></tr>
         <tr><td>상태 TTL 정리</td><td><ul><li>만료된 값도 컴팩션 때 실제로 지워짐 (컴팩션 필터)</li><li>TTL을 걸어도 디스크 공간은 컴팩션이 돌아야 줄어듦</li></ul></td></tr>

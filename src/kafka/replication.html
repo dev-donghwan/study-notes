@@ -60,7 +60,7 @@ lead: 한 파티션의 복제본들이 어떻게 같은 로그를 갖게 되고,
           </ul></li>
       </ol>
 
-      <h3>들고 나는 조건</h3>
+      <h3>ISR 이탈과 복귀</h3>
       <div class="table-wrap"><table>
         <tr><th>변화</th><th>조건</th><th>누가 정하나</th></tr>
         <tr><td>ISR에서 빠짐</td><td><ul><li><code>replica.lag.time.max.ms</code>(기본 30초) 동안 리더 LEO까지 따라오지 못함</li><li>팔로워가 죽거나 fetch를 멈춘 경우도 같음</li></ul></td><td><ul><li>리더가 판단해 컨트롤러에 변경 요청</li></ul></td></tr>
@@ -72,7 +72,7 @@ lead: 한 파티션의 복제본들이 어떻게 같은 로그를 갖게 되고,
     <section class="chapter">
       <h2>리더 선출</h2>
       <p class="lead">리더가 죽으면 KRaft 컨트롤러가 ISR 안에서 새 리더를 고른다. ISR에는 커밋된 레코드가 다 있으므로 유실이 없다.</p>
-      <h3>고르는 순서</h3>
+      <h3>리더 선출 순서</h3>
       <ol>
         <li><b>ISR 안에서</b>
           <ul>
@@ -91,7 +91,7 @@ lead: 한 파티션의 복제본들이 어떻게 같은 로그를 갖게 되고,
       </ol>
       <ul class="figcap"><li>순서는 Kafka 4.4.0 <code>PartitionChangeBuilder</code>의 선출 코드 기준</li></ul>
 
-      <h3>ISR 크기별로 보면 (복제 계수 3 · <code>min.insync.replicas=2</code> 예시)</h3>
+      <h3>ISR 크기와 쓰기 가용성 (복제 계수 3 · <code>min.insync.replicas=2</code> 예시)</h3>
       <div class="table-wrap"><table>
         <tr><th>ISR 크기</th><th><code>acks=all</code> 쓰기</th><th>리더가 죽으면</th></tr>
         <tr><td>3</td><td><ul><li>성공</li></ul></td><td><ul><li>남은 ISR 중 하나가 리더</li></ul></td></tr>

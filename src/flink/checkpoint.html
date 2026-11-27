@@ -31,7 +31,7 @@ lead: 흐르는 동안 상태와 읽은 위치를 어떻게 같은 시점으로 
             <li>그래서 각 서브태스크가 "배리어를 만난 순간"의 상태를 저장하면, 모두가 같은 경계로 저장된다</li>
           </ul></li>
       </ul>
-      <h3>단계별로 보면</h3>
+      <h3>역할별 배리어 처리</h3>
       <ol>
         <li><b>소스</b>
           <ul>
@@ -56,7 +56,7 @@ lead: 흐르는 동안 상태와 읽은 위치를 어떻게 같은 시점으로 
             <li>타임아웃 안에 다 안 모이면 N은 버리고 이전 완료본을 그대로 씀</li>
           </ul></li>
       </ol>
-      <h3>상태는 어떻게 저장되나</h3>
+      <h3>동기 사본과 비동기 업로드</h3>
       <!--fig:snapshot-timing-->
       <ol>
         <li><b>사본 확보</b> (동기)
@@ -123,7 +123,7 @@ lead: 흐르는 동안 상태와 읽은 위치를 어떻게 같은 시점으로 
 
     <section class="chapter">
       <h2>장애와 복구</h2>
-      <h3>TaskManager가 죽으면</h3>
+      <h3>TaskManager 장애</h3>
       <!--fig:failure-->
       <ol>
         <li>heartbeat가 끊기거나 쿠버네티스가 파드 종료를 알린다.</li>
@@ -136,7 +136,7 @@ lead: 흐르는 동안 상태와 읽은 위치를 어떻게 같은 시점으로 
             <li>끝단까지 보장하려면 소스는 다시 읽을 수 있어야 하고(예: Kafka), 싱크는 체크포인트 완료 때 커밋해야 한다(2단계 커밋)</li>
           </ul></li>
       </ol>
-      <h3>JobManager가 죽으면</h3>
+      <h3>JobManager 장애</h3>
       <!--fig:jm-failure-->
       <ol>
         <li>쿠버네티스(Deployment)가 새 JM 파드를 띄운다.</li>
@@ -158,7 +158,7 @@ lead: 흐르는 동안 상태와 읽은 위치를 어떻게 같은 시점으로 
         <tr><td>쓰는 때</td><td>도는 중 장애 → 자동 복구</td><td><ul><li>코드 배포</li><li>병렬도 변경</li><li>Flink 버전 업그레이드</li><li>클러스터 이전</li></ul></td></tr>
         <tr><td>형식</td><td><ul><li>빠르게 찍기 위주</li><li>RocksDB면 증분 가능</li></ul></td><td><ul><li>옮겨 쓰기 위주</li><li>기본은 전체·표준 형식</li></ul></td></tr>
       </table></div>
-      <h3>재배포할 때 시작 지점 — Operator의 <code>upgradeMode</code></h3>
+      <h3>Operator의 <code>upgradeMode</code></h3>
       <div class="table-wrap"><table>
         <tr><th>값</th><th>동작</th><th>쓰는 때</th></tr>
         <tr><td><code>last-state</code></td><td>HA에 기록된 마지막 체크포인트에서 시작</td><td><ul><li>평소 코드 배포</li><li>빠름, 잡 상태가 나빠도 가능</li></ul></td></tr>

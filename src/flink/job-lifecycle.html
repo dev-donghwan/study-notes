@@ -125,7 +125,7 @@ lead: Flink Kubernetes Operator와 application 모드를 기준으로, 잡을 �
         <tr><td>묶음</td><td><ul><li>직렬화 · 버퍼 없이 함수 호출로 전달</li><li>지연 작음</li></ul></td><td><ul><li>한 스레드라 코어 하나를 나눠 씀</li><li>누가 느린지 지표로 안 보임</li></ul></td></tr>
         <tr><td>끊음</td><td><ul><li>연산자별 병렬도</li><li>연산자별 지표</li></ul></td><td><ul><li>직렬화 · 버퍼 비용</li></ul></td></tr>
       </table></div>
-      <h3>체이닝 직접 조절하기</h3>
+      <h3>체이닝 조절</h3>
       <div class="table-wrap"><table>
         <tr><th>방법</th><th>범위</th><th>효과</th></tr>
         <tr><td><code>pipeline.operator-chaining.enabled: false</code></td><td>잡 전체</td><td>체이닝을 끔</td></tr>
@@ -194,7 +194,7 @@ lead: Flink Kubernetes Operator와 application 모드를 기준으로, 잡을 �
             <li>빈 슬롯 4개가 준비됨 → 다음 장에서 JobMaster가 서브태스크를 배치</li>
           </ul></li>
       </ol>
-      <h3>TM 안을 확대하면: TM ⊃ 슬롯 ⊃ 서브태스크</h3>
+      <h3>TM ⊃ 슬롯 ⊃ 서브태스크</h3>
       <!--fig:relation-->
       <ul>
         <li><b>TM</b>은 파드 하나, JVM 프로세스 하나다.

@@ -15,7 +15,7 @@ lead: 메시지가 프로듀서에서 외부 저장까지 가는 동안 어디�
         <tr><td>exactly-once</td><td><ul><li>결과가 한 번만 남음</li></ul></td><td><ul><li>at-least-once + 멱등</li><li>또는 원자적 커밋 (트랜잭션)</li></ul></td></tr>
       </table></div>
 
-      <h3>어디서 생기나</h3>
+      <h3>유실 · 중복 지점</h3>
       <!--fig:kafka-map-->
       <div class="table-wrap"><table>
         <tr><th>구역</th><th>유실</th><th>중복</th></tr>
@@ -267,7 +267,7 @@ lead: 메시지가 프로듀서에서 외부 저장까지 가는 동안 어디�
           </ul></li>
       </ul>
 
-      <h3>재처리가 생기는 상황</h3>
+      <h3>재처리 원인</h3>
       <div class="table-wrap"><table>
         <tr><th>상황</th><th>왜 다시 읽나</th><th>줄이는 법</th></tr>
         <tr><td>컨슈머 장애 · 재배포</td><td><ul><li>마지막 커밋 뒤부터 다시 읽음</li></ul></td><td><ul><li>커밋 주기를 짧게</li></ul></td></tr>
@@ -335,7 +335,7 @@ lead: 메시지가 프로듀서에서 외부 저장까지 가는 동안 어디�
       <h2 data-toc="exactly-once">exactly-once</h2>
       <p class="lead">at-least-once 위에서 중복을 없애는 방법은 두 가지다. 멱등하게 쓰거나, 결과와 위치를 한 번에 커밋한다.</p>
 
-      <h3>두 가지 길</h3>
+      <h3>멱등 쓰기와 원자적 커밋</h3>
       <div class="table-wrap"><table>
         <tr><th></th><th>at-least-once + 멱등</th><th>원자적 커밋</th></tr>
         <tr><td>방법</td><td><ul><li>두 번 와도 결과가 같게 씀</li></ul></td><td><ul><li>결과와 읽은 위치를 함께 커밋하거나 함께 버림</li></ul></td></tr>
@@ -427,7 +427,7 @@ lead: 메시지가 프로듀서에서 외부 저장까지 가는 동안 어디�
           </ul></li>
       </ul>
 
-      <h3>경로별로 고르기</h3>
+      <h3>경로별 방법</h3>
       <div class="table-wrap"><table>
         <tr><th>경로</th><th>방법</th></tr>
         <tr><td>Kafka → Kafka</td><td><ul><li>Kafka 트랜잭션 또는 Kafka Streams <code>exactly_once_v2</code></li><li>읽는 쪽 <code>read_committed</code></li></ul></td></tr>
